@@ -1,44 +1,51 @@
-#LIBRERIAS#
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 from flask import Flask, render_template, Blueprint
 from sklearn.metrics import DistanceMetric
 import networkx as nx
-from db_manager import fetch_data
-
+from db_manager import fetch_data, fetch_data_PRO
+from planasEnPatio import procesar_operadores
 
 planasPorAsignar = Blueprint('planasPorAsignar', __name__)
 @planasPorAsignar.route('/')
 def index():
-    planas, Operadores = cargar_datos()
+    planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs  = cargar_datos()
     planasPorAsignar = procesar_planas(planas)
     operadores_sin_asignacion = procesar_operadores(Operadores)
-    datos_html_operadores = operadores_sin_asignacion.to_html()
+    asignacionesPasadasOperadores=  asignacionesPasadasOp(Cartas)
+    siniestroKm= siniestralidad(Gasto, Km)
+    ETAi= eta(ETAs)
+    calOperadores = calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOperadores, siniestroKm, ETAi)
+    datos_html_operadores = calOperadores.to_html()
     datos_html_empates_dobles = planasPorAsignar.to_html()
     return render_template('planasPorAsignar.html', datos_html_operadores=datos_html_operadores, datos_html_empates_dobles=datos_html_empates_dobles)
 
 def cargar_datos():
-    consulta_planas = "SELECT * FROM DimTableroControlRemolque"
+    consulta_planas = "SELECT * FROM DimTableroControlRemolque WHERE PosicionActual = 'NYC' AND Estatus = 'CARGADO EN PATIO' AND Ruta IS NOT NULL AND CiudadDestino != 'MONTERREY'AND CiudadDestino != 'GUADALUPE'"
     consulta_operadores = "SELECT * FROM DimTableroControl"
+    ConsultaCartas = f"SELECT * FROM ReporteCartasPorte WHERE FechaSalida > '2024-01-01'"
+    ConsultaGasto= f"SELECT *   FROM DimReporteUnificado"
+    ConsultaKm = f"SELECT *   FROM DimRentabilidadLiquidacion"
+    ConsultaBloqueo = f"SELECT *   FROM DimOperadores Where Activo = 'Si'"
+    ConsultaETA = f"SELECT NombreOperador, FechaFinalizacion, CumpleETA FROM DimIndicadoresOperaciones WHERE FechaSalida > '2024-01-01' AND FechaLlegada IS NOT NULL"
     planas = fetch_data(consulta_planas)
     Operadores = fetch_data(consulta_operadores)
-    return planas, Operadores
-
+    Cartas = fetch_data(ConsultaCartas)
+    Gasto = fetch_data_PRO(ConsultaGasto)
+    Km = fetch_data(ConsultaKm)
+    Bloqueo = fetch_data(ConsultaBloqueo)
+    ETAs = fetch_data(ConsultaETA)
+    return planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs
 
 def procesar_planas(planas):
-  
     # PLANAS AL MISMO DESTINO#
     P = planas.copy()
-
     # Filtros combinados para eficiencia y claridad usando .query()
-    Pa= P.query("PosicionActual == 'NYC' and Estatus == 'CARGADO EN PATIO' and Ruta.notna()")
+    P = P.query("Ruta.notna()")
 
-    #Generaba un warning sin este copy
-    P = Pa.copy()
     # Concatena Cliente-Ciudad
     P['Cliente-Ciudad Destino'] = P['Cliente'].str.cat(P['CiudadDestino'], sep='-')
-    P= P[P['Cliente-Ciudad Destino'] != 'TERNIUM MEXICO-MONTERREY']
 
     # Se Mantiene Columnas
     P = P[['Cliente-Ciudad Destino', 'FechaEstatus', 'Remolque','ValorViaje']]
@@ -85,28 +92,32 @@ def procesar_planas(planas):
                 i += 1  # Salta la siguiente fila para evitar duplicar el emparejamiento
 
         i += 1  # Incrementa i para continuar al siguiente par
-
+    
     # Crear un nuevo DataFrame con las combinaciones emparejadas
     df_empates_dobles = pd.DataFrame(filas_empate_doble, columns=[
     'Cliente-Ciudad destino', 'Fecha Estatus_a', 'Fecha Estatus_b', 
     'remolque_a','remolque_b','ValorViaje_a', 'ValorViaje_b'
     ])
 
-    # Dividir la columna 'Cliente-Ciudad destino' por el primer espacio
-    df_empates_dobles [['Cliente', 'Ruta']] = df_empates_dobles ['Cliente-Ciudad destino'].str.split(n=1, expand=True)
+    # Manejamos el error de un posible df vacio
+    if not df_empates_dobles.empty:
+        # Dividir la columna 'Cliente-Ciudad destino' por el primer espacio
+        df_empates_dobles[['Cliente', 'Ruta']] = df_empates_dobles['Cliente-Ciudad destino'].str.split(n=1, expand=True)
+        # Eliminar la columna original 'Cliente-Ciudad destino'
+        df_empates_dobles.drop(columns=['Cliente-Ciudad destino'], inplace=True)
+        # Quitar espacios y ajustar ruta para join y aregar 'monterrey-' al destino
+        df_empates_dobles['Ruta'] = df_empates_dobles['Ruta'].str.replace(r'^.*?-','MONTERREY-', regex=True)
+        df_empates_dobles['Ruta'] = df_empates_dobles['Ruta'].str.replace(' ', '')
+        mismoDestino = df_empates_dobles.copy()
+    else:
+        
+        mismoDestino = df_empates_dobles.copy()
 
-    # Eliminar la columna original 'Cliente-Ciudad destino'
-    df_empates_dobles.drop(columns=['Cliente-Ciudad destino', 'Cliente'], inplace=True)
 
-    # Quitar espacios y ajustar ruta para join
-    df_empates_dobles['Ruta'] = df_empates_dobles['Ruta'].str.replace(r'^.*?-','MONTERREY-', regex=True)
-    df_empates_dobles['Ruta'] = df_empates_dobles['Ruta'].str.replace(' ', '')
-
-    mismoDestino = df_empates_dobles.copy()
+    
 
 
-
-
+    
     #PLANAS A DIFERENTE DESTINO
     Ubicaciones = pd.DataFrame({
         'City': ['AMATLANDELOSREYES', 'CUAUTLA,MORELOS','QUERETARO', 'GUADALAJARA', 'PUERTOVALLARTA', 'MAZATLAN', 'CULIACAN', 'LEON', 'MEXICO', 'SANLUISPOTOSI', 'VERACRUZ', 'TULTITLAN', 'JIUTEPEC', 'VILLAHERMOSA', 'PACHUCADESOTO', 'COLON', 'MERIDA', 'SALTILLO', 'CHIHUAHUA', 'TUXTLAGTZ', 'CORDOBA',
@@ -121,6 +132,7 @@ def procesar_planas(planas):
     })
 
     planasTotales = P.copy()
+    
     PlanasyaAsignadas = df_empates_dobles.copy()
     PlanasyaAsignadas = pd.concat([PlanasyaAsignadas['remolque_a'], PlanasyaAsignadas['remolque_b']], ignore_index=True)
 
@@ -129,6 +141,10 @@ def procesar_planas(planas):
     PlanasTotales_no_asignadas.loc[:, 'City'] = PlanasTotales_no_asignadas['Cliente-Ciudad Destino'].str.split('-').str[1]
     PlanasTotales_no_asignadas.loc[:, 'City'] = PlanasTotales_no_asignadas['City'].str.replace(' ', '', regex=True)
     
+    
+
+
+
     # Merge de DataFrames, seleccionando directamente las columnas deseadas
     df = pd.merge(PlanasTotales_no_asignadas, Ubicaciones, on='City', how='inner')[['City', 'Latitude', 'Longitude']]
 
@@ -239,6 +255,20 @@ def procesar_planas(planas):
         df_empates_dobles['Ruta'] = df_empates_dobles.apply(lambda x: f"{x['Ruta1']} | {x['Ruta2']}", axis=1)
         df_empates_dobles = df_empates_dobles[['remolque_a', 'remolque_b', 'ValorViaje_a', 'ValorViaje_b', 'Fecha Estatus_a', 'Fecha Estatus_b', 'Ruta']]
 
+
+        # No se asignan si tienen menos de 23 horas en patio
+        ahora = datetime.now()
+        #Obtener la fecha mas antigua entre las dos planas
+        df_empates_dobles['Fecha Más Antigua'] = np.where(df_empates_dobles['Fecha Estatus_a'] < df_empates_dobles['Fecha Estatus_b'],
+                                                   df_empates_dobles['Fecha Estatus_a'],
+                                                    df_empates_dobles['Fecha Estatus_b'])
+        limite = ahora - timedelta(hours=12)
+
+        #Filtrar el DataFrame para quedarte solo con las filas cuya 'Fecha Estatus_a' sea mayor a 24 horas atrás
+        df_empates_dobles= df_empates_dobles[df_empates_dobles['Fecha Más Antigua'] < limite]
+        df_empates_dobles.drop('Fecha Más Antigua', axis=1, inplace=True)
+
+        
         diferentesDestino = df_empates_dobles.copy()
         
 
@@ -247,15 +277,15 @@ def procesar_planas(planas):
 
     #PLANAS SIN PARES MAYOR A 24 HRS
     #Planas sin pares al mismo destino a destinos cercanos
-    combined_df= combined_df[pd.isna(combined_df['IDe'])]
+    nones= combined_df[pd.isna(combined_df['IDe'])]
     ahora = datetime.now()
     limite = ahora - timedelta(hours=24)
 
     #Filtrar el DataFrame para quedarte solo con las filas cuya 'Fecha Estatus_a' sea mayor a 24 horas atrás
-    combined_df= combined_df[combined_df['FechaEstatus'] < limite]
+    nones= nones[nones['FechaEstatus'] < limite]
 
     #Renombrar columnas
-    combined_df.rename(columns={
+    nones.rename(columns={
     'Remolque': 'remolque_a',
     'FechaEstatus': 'Fecha Estatus_a',
     'ValorViaje':'ValorViaje_a'
@@ -266,7 +296,7 @@ def procesar_planas(planas):
     #DATAFRAME FINAL
     # Concatena todos los dataframes 
     df_concatenado = pd.concat([mismoDestino, diferentesDestino], ignore_index=True)
-    df_concatenado = pd.concat([df_concatenado , combined_df], ignore_index=True)
+    df_concatenado = pd.concat([df_concatenado , nones], ignore_index=True)
 
     # Calcular valor total del viaje
     df_concatenado['Monto'] = df_concatenado['ValorViaje_a'] + df_concatenado['ValorViaje_b']
@@ -308,19 +338,183 @@ def procesar_planas(planas):
 
     df_concatenado.reset_index(drop=True, inplace=True)
     df_concatenado.index = df_concatenado.index + 1
+    
+
+    '''
+    prueba = planasTotales.to_json(orient='records')
+    data_list = json.loads(prueba)
+   
+    # URL de la API de Power BI
+    url = "https://api.powerbi.com/beta/2344bc91-a4bb-4b3c-9010-d9121957cf5a/datasets/14b50887-7a9c-414c-9941-d851db5b8efd/rows?experience=power-bi&key=UBD6OEer2Q1lGGem4XvkzCiepMmWwO6DthvLQ6nlsNSXrw1GuRq8oWpdzSYroDmMFJkh0rwYfvxEONmjdREeRQ%3D%3D"
+
+    # Enviar los datos al API
+    response = requests.post(url, json=data_list, verify=False)
+
+    # Verificar si la solicitud fue exitosa
+    if response.status_code == 200:
+        print("Datos enviados correctamente")
+    else:
+        print("Error al enviar datos:", response.status_code, response.text)
+
+    '''
 
     return df_concatenado
+    
+def calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOp, siniestroKm, ETAi):
+    calOperador= operadores_sin_asignacion.copy()
+    calOperador= pd.merge(operadores_sin_asignacion, Bloqueo, left_on='Operador', right_on='NombreOperador', how='left')
+    calOperador= pd.merge(calOperador, asignacionesPasadasOp, left_on='Operador', right_on='Operador', how='left')
+    calOperador= pd.merge(calOperador, siniestroKm, left_on='Tractor', right_on='Tractor', how='left')
+    calOperador= pd.merge(calOperador, ETAi, left_on='Operador', right_on='NombreOperador', how='left')
+    calOperador['ViajeCancelado']= 20
+    calOperador['CalFinal']= calOperador['CalificacionVianjesAnteiores']+calOperador['PuntosSiniestros']+calOperador['Calificacion SAC']+calOperador['ViajeCancelado']
+    calOperador = calOperador[['FechaIngreso','Operador','Tractor','UOperativa_x', 'Tiempo Disponible', 'OperadorBloqueado', 
+        'Bueno','Regular', 'Malo', 'CalificacionVianjesAnteiores', 'Siniestralidad', 'PuntosSiniestros', 'Cumple ETA', 'No Cumple ETA',
+        'Calificacion SAC', 'ViajeCancelado', 'CalFinal']]  
+    return calOperador
+   
+def asignacionesPasadasOp(Cartas):
+    CP= Cartas.copy()
+    # 30 dias atras
+    fecha_actual = datetime.now()
+    fecha_30_dias_atras = fecha_actual - timedelta(days=75)
+    # Dividir la columna 'Ruta' por '||' y luego por '-' para obtener origen
+    CP[['ID1', 'Ciudad_Origen', 'Ciudad_Destino']] = CP['Ruta'].str.split(r' \|\| | - ', expand=True)
+    # Filtro Mes actual, UO, ColumnasConservadas, Ciudad Origen
+    CP = CP[CP['FechaSalida'] >= fecha_30_dias_atras]
+    CP = CP[CP['UnidadOperativa'].isin(['U.O. 01 ACERO', 'U.O. 02 ACERO', 'U.O. 03 ACERO', 'U.O. 04 ACERO', 'U.O. 39 ACERO', 'U.O. 07 ACERO', 'U.O. 15 ACERO (ENCORTINADOS)', 'U.O. 52 ACERO (ENCORTINADOS SCANIA)',  'U.O. 41 ACERO LOCAL (BIG COIL)'])]
+    CP= CP[['IdViaje', 'Cliente', 'Operador', 'Ruta', 'SubtotalMXN', 'FechaSalida', 'Ciudad_Origen']]
+    CP = CP[CP['Ciudad_Origen'].isin(['MONTERREY'])]
+
+    # Agrupar 
+    CP = CP.groupby(['IdViaje', 'Operador']).agg({'SubtotalMXN': 'sum'}).reset_index()
+
+    # Funsion para determinar tipo de viaje
+    def etiquetar_tipo_viaje(subtotal):
+        if subtotal >= 105000:
+            return "Bueno"
+        elif subtotal <= 81000:
+            return "Malo"
+        else:
+            return "Regular"
+
+    # Aplicar la función a la columna 'SubtotalMXN' para crear la columna 'TipoViaje'
+    CP['TipoViaje'] = CP['SubtotalMXN'].apply(lambda subtotal: etiquetar_tipo_viaje(subtotal))
+
+    # Crear una tabla pivote para contar la cantidad de 'Bueno', 'Malo' y 'Regular' para cada operador
+    CP = pd.pivot_table(CP, index='Operador', columns='TipoViaje', aggfunc='size', fill_value=0)
+
+    ''' 
+    # Calculo de Puntajes
+    CP['Puntajes'] = CP['Bueno'] - CP['Malo']
+
+    (CP['Malo']*2)
+
+    # Funsion para asiganar puntaje
+    def Puntaje(puntajes):
+        if puntajes >= 2:
+            return 30
+        elif puntajes <= -2:
+            return 50
+        else:
+            return 40
+        
+    # Asignar los puntajes por fila
+    CP['CalificacionVianjesAnteiores'] = CP['Puntajes'].apply(lambda puntajes: Puntaje(puntajes))
+    
+    # Resetear el índice para obtener 'Operador' como una columna
+    '''
+    # Define los pesos
+    P1 = 2
+    P2 = 1
+
+    # Calcula el puntaje bruto para cada fila
+    CP['PuntajeBruto'] = (CP['Malo'] * P1) - (CP['Bueno'] * P2)
+
+    # Calcula el máximo y mínimo puntaje bruto que podría existir basado en los datos del DataFrame
+    max_puntaje_posible = (CP['Malo'] + CP['Bueno']) * P1
+    min_puntaje_posible = (CP['Malo'] + CP['Bueno']) * P2 * -1
+
+    # Determina el rango de puntaje total
+    rango_puntaje = max_puntaje_posible.max() - min_puntaje_posible.min()
+
+    # Ajusta los puntajes para que el mínimo sea 0 y normaliza a una escala de 50
+    CP['CalificacionVianjesAnteiores'] = 15+40 * (CP['PuntajeBruto'] - min_puntaje_posible.min()) / rango_puntaje
+
+    CP['CalificacionVianjesAnteiores'] = CP['CalificacionVianjesAnteiores'].round().astype(int)
 
 
-def procesar_operadores(Operadores):
-    Operadores = Operadores[Operadores['Estatus'].isin(['Disponible'])]
-    Operadores  = Operadores [Operadores ['UOperativa'].isin(['U.O. 01 ACERO', 'U.O. 02 ACERO', 'U.O. 03 ACERO', 'U.O. 04 ACERO', 'U.O. 07 ACERO','U.O. 39 ACERO', 'U.O. 15 ACERO (ENCORTINADOS)', 'U.O. 41 ACERO LOCAL (BIG COIL)', 'U.O. 52 ACERO (ENCORTINADOS SCANIA)'])]
-    Operadores = Operadores[Operadores['Destino'].isin(['NYC'])]
-    Operadores['Tiempo Disponible'] = ((datetime.now() - Operadores['FechaEstatus']).dt.total_seconds() / 3600).round(1)
-    Operadores = Operadores[Operadores['ObservOperaciones'].isna() | Operadores['ObservOperaciones'].eq('')]
-    Operadores = Operadores[['Operador', 'Tractor', 'UOperativa', 'Tiempo Disponible']]
-    Operadores.sort_values(by='Tiempo Disponible', ascending=False, inplace=True)
-    Operadores.reset_index(drop=True, inplace=True)
-    Operadores.index += 1
-    operadores_sin_asignacion = Operadores.copy()
-    return operadores_sin_asignacion
+    CP = CP.reset_index()
+    return CP
+
+def siniestralidad(Gasto, Km):
+    G= Gasto.copy()
+    K = Km.copy()
+
+    # Filtrar las filas que contengan "SINIESTRO" en la columna "Reporte", la empresa NYC
+    G = G[G['Reporte'].str.contains("SINIESTRO")]
+    G= G[G['Empresa'].str.contains("NYC")]
+
+    # Quedarme con tres meses de historia hacia atras a partir de hoy, mantener las columnas
+    G= G[pd.to_datetime(G['FechaSiniestro']).dt.date >= (datetime.now() - timedelta(days=3*30)).date()]
+    G= G[["Tractor","TotalFinal"]]
+
+    # Agrupar Por Tractor
+    G = G.groupby('Tractor')['TotalFinal'].sum()
+
+    # Resetear Index
+    G= G.reset_index()
+
+    # Quedarse con columnas
+    K = K[["Tractor", "FechaPago", "KmsReseteo"]]
+
+    # Quedarme con tres meses de historia hacia atras a partir de hoy
+    K = K[pd.to_datetime(K['FechaPago']).dt.date >= (datetime.now() - timedelta(days=3*30)).date()]
+
+    # Agrupar por la columna "Tractor" y sumar los valores de la columna "KmsReseteo"
+    K= K.groupby('Tractor')['KmsReseteo'].sum()
+
+    # Voy a pasarlo a un dataframe 
+    K = K.reset_index()
+
+    # Realizar left join entre kilometros y gasto
+    K= K.merge(G, on='Tractor', how='left')
+
+    # Rellenar los valores NaN en la columna "totalfinal" con ceros (0)
+    K['TotalFinal'] = K['TotalFinal'].fillna(0)
+
+    # Agregar una nueva columna llamada "SINIESTRALIDAD" al DataFrame resultado_join
+    K['Siniestralidad'] = (K['TotalFinal'] / K['KmsReseteo']).round(2)
+
+    # Ordenar el DataFrame resultado_join de menor a mayor por la columna "SINIESTRALIDAD"
+    K= K.sort_values(by='Siniestralidad')
+
+    # Funsion para asiganar puntaje
+    def Sis(SiniestroP):
+        if SiniestroP >= 0.15:
+            return 0
+        elif SiniestroP >= 0.06:
+            return 10
+        else:
+            return 20
+        
+    # Asignar los puntajes por fila
+    K['PuntosSiniestros'] = K['Siniestralidad'].apply(lambda SiniestroP: Sis(SiniestroP))
+
+    #voy a pasarlo a un dataframe 
+    K = K.reset_index()
+    return K
+
+def eta(ETAi):
+    # Crear una tabla pivote para contar la cantidad de 'Bueno', 'Malo' y 'Regular' para cada operador
+    ETAi= pd.pivot_table(ETAi, index='NombreOperador', columns='CumpleETA', aggfunc='size', fill_value=0)
+    # Resetear el índice para obtener 'Operador' como una columna
+    ETAi= ETAi.reset_index()
+    ETAi['Calificacion SAC'] = ((ETAi['Cumple'] / (ETAi['Cumple'] + ETAi['No Cumple'])) * 10).round(0).astype(int)
+    ETAi.rename(columns={
+    'Cumple': 'Cumple ETA',
+    'No Cumple': 'No Cumple ETA'
+    }, inplace=True)
+
+
+    return ETAi 
