@@ -1,11 +1,11 @@
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from flask import Flask, render_template, Blueprint
+from flask import render_template, Blueprint
 from sklearn.metrics import DistanceMetric
 import networkx as nx
 from db_manager import fetch_data, fetch_data_PRO
-from planasEnPatio import procesar_operadores
+from planasEnPatio import procesar_operadores, procesar_planas
 
 planasPorAsignar = Blueprint('planasPorAsignar', __name__)
 @planasPorAsignar.route('/')
@@ -22,13 +22,27 @@ def index():
     return render_template('planasPorAsignar.html', datos_html_operadores=datos_html_operadores, datos_html_empates_dobles=datos_html_empates_dobles)
 
 def cargar_datos():
-    consulta_planas = "SELECT * FROM DimTableroControlRemolque WHERE PosicionActual = 'NYC' AND Estatus = 'CARGADO EN PATIO' AND Ruta IS NOT NULL AND CiudadDestino != 'MONTERREY'AND CiudadDestino != 'GUADALUPE'"
+    consulta_planas = """
+        SELECT *
+        FROM DimTableroControlRemolque
+        WHERE PosicionActual = 'NYC'
+        AND Estatus = 'CARGADO EN PATIO'
+        AND Ruta IS NOT NULL
+        AND CiudadDestino != 'MONTERREY'
+        AND CiudadDestino != 'GUADALUPE'
+        AND CiudadDestino != 'APODACA'
+    """
     consulta_operadores = "SELECT * FROM DimTableroControl"
     ConsultaCartas = f"SELECT * FROM ReporteCartasPorte WHERE FechaSalida > '2024-01-01'"
     ConsultaGasto= f"SELECT *   FROM DimReporteUnificado"
     ConsultaKm = f"SELECT *   FROM DimRentabilidadLiquidacion"
     ConsultaBloqueo = f"SELECT *   FROM DimOperadores Where Activo = 'Si'"
-    ConsultaETA = f"SELECT NombreOperador, FechaFinalizacion, CumpleETA FROM DimIndicadoresOperaciones WHERE FechaSalida > '2024-01-01' AND FechaLlegada IS NOT NULL"
+    ConsultaETA = """
+        SELECT NombreOperador, FechaFinalizacion, CumpleETA 
+        FROM DimIndicadoresOperaciones 
+        WHERE FechaSalida > '2024-01-01' 
+        AND FechaLlegada IS NOT NULL
+        """
     planas = fetch_data(consulta_planas)
     Operadores = fetch_data(consulta_operadores)
     Cartas = fetch_data(ConsultaCartas)
@@ -36,14 +50,21 @@ def cargar_datos():
     Km = fetch_data(ConsultaKm)
     Bloqueo = fetch_data(ConsultaBloqueo)
     ETAs = fetch_data(ConsultaETA)
+    
+    file_path = r'C:\Users\hernandezm\Desktop\DBasignacion.xlsx'
+    # Cargar los datos de la hoja 'DB'
+    data = pd.read_excel(file_path, sheet_name='DB')
+    # Eliminar las columnas que solo contienen NaN
+    data_clean = data.dropna(axis=1, how='all')
+    planas = planas[~planas['Remolque'].isin(data_clean['Remolque'])]
+    
     return planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs
 
 def procesar_planas(planas):
     # PLANAS AL MISMO DESTINO#
     P = planas.copy()
-    # Filtros combinados para eficiencia y claridad usando .query()
-    P = P.query("Ruta.notna()")
-
+    # Filtro no nulos.
+    #P = P.query("Ruta.notna()")
     # Concatena Cliente-Ciudad
     P['Cliente-Ciudad Destino'] = P['Cliente'].str.cat(P['CiudadDestino'], sep='-')
 
@@ -62,9 +83,6 @@ def procesar_planas(planas):
 
     # Orden Clsificacion Planas
     filas_repetidas = filas_repetidas.sort_values(by=['Clasificado', 'FechaEstatus'], ascending=[True, True])
-
-    # Generar todas las combinaciones únicas de índices de las filas repetidas
-    #combinaciones_indices = list(combinations(filas_repetidas.index, 2))
 
     # Crear una lista para almacenar las combinaciones únicas sin repetición de remolques
     filas_empate_doble = []
@@ -110,7 +128,6 @@ def procesar_planas(planas):
         df_empates_dobles['Ruta'] = df_empates_dobles['Ruta'].str.replace(' ', '')
         mismoDestino = df_empates_dobles.copy()
     else:
-        
         mismoDestino = df_empates_dobles.copy()
 
 
@@ -120,13 +137,13 @@ def procesar_planas(planas):
     
     #PLANAS A DIFERENTE DESTINO
     Ubicaciones = pd.DataFrame({
-        'City': ['AMATLANDELOSREYES', 'CUAUTLA,MORELOS','QUERETARO', 'GUADALAJARA', 'PUERTOVALLARTA', 'MAZATLAN', 'CULIACAN', 'LEON', 'MEXICO', 'SANLUISPOTOSI', 'VERACRUZ', 'TULTITLAN', 'JIUTEPEC', 'VILLAHERMOSA', 'PACHUCADESOTO', 'COLON', 'MERIDA', 'SALTILLO', 'CHIHUAHUA', 'TUXTLAGTZ', 'CORDOBA',
+        'City': ['XALAPA,VER','AMATLANDELOSREYES', 'CUAUTLA,MORELOS','QUERETARO', 'GUADALAJARA', 'PUERTOVALLARTA', 'MAZATLAN', 'CULIACAN', 'LEON', 'MEXICO', 'SANLUISPOTOSI', 'VERACRUZ', 'TULTITLAN', 'JIUTEPEC', 'VILLAHERMOSA', 'PACHUCADESOTO', 'COLON', 'MERIDA', 'SALTILLO', 'CHIHUAHUA', 'TUXTLAGTZ', 'CORDOBA',
                     'TOLUCA', 'CIUDADHIDALGOCHP', 'CAMPECHE', 'ATITALAQUIA', 'MATAMOROS', 'ZAPOPAN', 'CIUDADCUAHUTEMOCCHH', 'MORELIA', 'TLAXCALA', 'GUADALUPE', 'SANTACRUZSON', 'LASVARAS', 'PACHUCA', 'CIUDADJUAREZ', 'TLAJOMULCO', 'PIEDRASNEGRAS', 'RAMOSARIZPE', 'ORIZABA', 'TAPACHULA', 'TEPATITLAN', 'TLAQUEPAQUE', 'TEAPEPULCO', 'LABARCA', 'ELMARQUEZ', 'CIUDADVICTORIA', 'NUEVOLAREDO', 'TIZAYUCA,HIDALGO', 'ELSALTO', 'OCOTLANJAL', 'TEZONTEPEC', 'ZAPOTILTIC', 'PASEOELGRANDE', 'POZARICA', 'JACONA', 'FRESNILLO', 'PUEBLA', 'TUXTLAGUTIERREZ', 'PLAYADELCARMEN', 'REYNOSA', 'MEXICALI', 'TEPEJIDELORODEOCAMPO',
                     'LEON', 'CUERNAVACA', 'CHETUMAL', 'CHIHUAHUA', 'SILAO', 'ACAPULCODEJUAREZ', 'AGUASCALIENTES', 'TIJUANA', 'OCOSINGO', 'MONCLOVA', 'OAXACA', 'SOLIDARIDAROO', 'JIUTEPEC', 'ELPRIETO', 'TORREON', 'HERMOSILLO', 'CELAYA', 'CANCUN', 'URUAPAN', 'ALTAMIRA', 'COATZACUALCOS', 'IRAPUATO', 'CASTAÑOS', 'DURANGO', 'COLON', 'CIUDADVALLLES', 'MANZANILLA', 'TAMPICO', 'GOMEZPALACIO', 'ZACATECAS', 'SALAMANCA', 'COMITANDEDOMINGUEZ', 'UMAN', 'TUXTEPEC', 'ZAMORA', 'CORDOBA', 'MONTERREY', 'PENJAMO', 'NOGALES', 'RIOBRAVO', 'CABORCA', 'FRONTERACOAHUILA', 'LOSMOCHIS', 'KANASIN', 'ARRIAGACHIAPAS', 'VALLEHERMOSA', 'SANJOSEITURBIDE', 'MAZATLAN', 'TEHUACAN', 'CHILTEPEC', 'CHILPANCINGODELOSBRAVO'],
-        'Latitude': [18.846950, 18.836561, 20.592275, 20.74031, 20.655893, 23.255931, 24.800964, 21.133941, 19.440265, 22.158710, 19.19002, 19.647433, 18.891529, 17.992561, 20.106154, 20.781414, 20.984380, 25.427049, 28.643361, 16.761753, 18.890666,
+        'Latitude': [19.533927, 18.846950, 18.836561, 20.592275, 20.74031, 20.655893, 23.255931, 24.800964, 21.133941, 19.440265, 22.158710, 19.19002, 19.647433, 18.891529, 17.992561, 20.106154, 20.781414, 20.984380, 25.427049, 28.643361, 16.761753, 18.890666,
                         19.271311, 14.679697, 18.833447, 20.054095, 25.845915, 20.76705, 28.431062, 19.736983, 19.500336, 25.717427, 31.239198, 28.165034, 20.13492, 31.785672, 20.488792, 28.721685, 25.594781, 18.88138, 14.950696, 20.842635, 20.646152, 19.799357, 20.313766, 20.958186, 23.786371, 27.541875, 19.863533, 20.531878, 20.380148, 19.891505, 19.641563, 20.566394, 20.576162, 19.971759, 23.215653, 19.132065, 16.801565, 20.707474, 26.128212, 32.6718, 19.943972,
                         21.188758, 18.998997, 18.561445, 31.542897, 20.968175, 16.923231, 21.942294, 32.550529, 16.922181, 26.965938, 17.128621, 20774439, 18.932162, 22.22124, 25.622625, 29.098203, 20.581304, 21.208637, 19.432413, 22.430696, 22.430608, 20.725167, 20.828685, 24.077945, 22.027654, 20.025186, 19.127328, 22.323528, 25.629602, 22.782732, 20.604713, 16.2059, 20.914188, 18.108973, 20.018848, 18.911559, 25.79573, 20.444102, 31.331515, 26.007962, 30.751014, 26.976145, 25.831174, 20.979043, 16.251855, 25.690649, 21.020823, 23.316277, 18.504335, 18.908622, 17.592174],
-        'Longitude': [-96.914283, -98.944068, -100.394273, -103.31312, -105.221967, -106.412165, -107.390388, -101.661519, -99.206780, -100.970141, -96.196430, -99.164822, -99.181056, -92.942980, -98.759106, -100.047289, -89.620138, -100.985244, -106.056315, -93.108217, -96.932524,
+        'Longitude': [-96.909218, -96.914283, -98.944068, -100.394273, -103.31312, -105.221967, -106.412165, -107.390388, -101.661519, -99.206780, -100.970141, -96.196430, -99.164822, -99.181056, -92.942980, -98.759106, -100.047289, -89.620138, -100.985244, -106.056315, -93.108217, -96.932524,
                         -99.667407, -92.151656, -90.286039, -99.222389, -97.503895, -103.351047, -106.83201, -101.204422, -98.158429, -100.181515, -110.59637, -105.340582, -98.772788, -106.566775, -103.445088, -100.547409, -100.900214, -97.104977, -92.254966, -102.79309, -103.317318, -98.555426, -102.541315, -100.2477, -99.16679, -99.565339, -98.976743, -103.181408, -102.777496, -98.814611, -103.449286, -100.679298, -97.430099, -102.298419, -102.850368, -98.222853, -93.116207, -87.07644, -98.343761, -115.385465, -99.339322,
                         -101.768658, -99.257945, -88.27958, -107.90993, -101.415423, -99.825972, -102.298616, -116.875228, -92.093952, -101.400616, -97.76784, -86.986023, -99.181586, -97.917121, -103.387956, -110.978133, -100.812923, -86.837061, -102.021193, -97.947615, -94.417513, -101.378726, -101.42206, -104.66471, -99.024839, -99.025514, -104.393928, -97.88042, -103.500552, -102.573756, -101.174834, -92.132644, -89.695333, -96.141711, -102.285924, -96.98147, -100.385905, -101.730812, -110.932889, -98.122363, -112.157303, -101.436711, -108.989827, -89.5488, -93.920658, -97.810778, -100.395074, -106.478543, -97414124, -97.047666, -99.51663]
     })
@@ -262,7 +279,7 @@ def procesar_planas(planas):
         df_empates_dobles['Fecha Más Antigua'] = np.where(df_empates_dobles['Fecha Estatus_a'] < df_empates_dobles['Fecha Estatus_b'],
                                                    df_empates_dobles['Fecha Estatus_a'],
                                                     df_empates_dobles['Fecha Estatus_b'])
-        limite = ahora - timedelta(hours=12)
+        limite = ahora - timedelta(hours=23)
 
         #Filtrar el DataFrame para quedarte solo con las filas cuya 'Fecha Estatus_a' sea mayor a 24 horas atrás
         df_empates_dobles= df_empates_dobles[df_empates_dobles['Fecha Más Antigua'] < limite]
@@ -367,12 +384,17 @@ def calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOp, sinie
     calOperador= pd.merge(calOperador, siniestroKm, left_on='Tractor', right_on='Tractor', how='left')
     calOperador= pd.merge(calOperador, ETAi, left_on='Operador', right_on='NombreOperador', how='left')
     calOperador['ViajeCancelado']= 20
+    
     calOperador['CalFinal']= calOperador['CalificacionVianjesAnteiores']+calOperador['PuntosSiniestros']+calOperador['Calificacion SAC']+calOperador['ViajeCancelado']
     calOperador = calOperador[['FechaIngreso','Operador','Tractor','UOperativa_x', 'Tiempo Disponible', 'OperadorBloqueado', 
         'Bueno','Regular', 'Malo', 'CalificacionVianjesAnteiores', 'Siniestralidad', 'PuntosSiniestros', 'Cumple ETA', 'No Cumple ETA',
-        'Calificacion SAC', 'ViajeCancelado', 'CalFinal']]  
+        'Calificacion SAC', 'ViajeCancelado', 'CalFinal']]
+    calOperador= calOperador.dropna(subset=['FechaIngreso'])
+    calOperador['PuntosSiniestros'] = calOperador['PuntosSiniestros'].fillna(20)
+    
+    
     return calOperador
-   
+
 def asignacionesPasadasOp(Cartas):
     CP= Cartas.copy()
     # 30 dias atras
@@ -506,15 +528,25 @@ def siniestralidad(Gasto, Km):
     return K
 
 def eta(ETAi):
-    # Crear una tabla pivote para contar la cantidad de 'Bueno', 'Malo' y 'Regular' para cada operador
-    ETAi= pd.pivot_table(ETAi, index='NombreOperador', columns='CumpleETA', aggfunc='size', fill_value=0)
-    # Resetear el índice para obtener 'Operador' como una columna
-    ETAi= ETAi.reset_index()
-    ETAi['Calificacion SAC'] = ((ETAi['Cumple'] / (ETAi['Cumple'] + ETAi['No Cumple'])) * 10).round(0).astype(int)
+    # Intentar crear una tabla pivote para contar la cantidad de 'Bueno', 'Malo' y 'Regular' para cada operador
+    try:
+        ETAi = pd.pivot_table(ETAi, index='NombreOperador', columns='CumpleETA', aggfunc='size', fill_value=0)
+        ETAi = ETAi.reset_index()
+    except Exception as e:
+        print(f"Error al crear la tabla pivote: {e}")
+        return None  # Retorna None o maneja de alguna otra manera el error
+
+    # Asegurar que las columnas 'Cumple' y 'No Cumple' están presentes antes de realizar cálculos
+    if 'Cumple' in ETAi.columns and 'No Cumple' in ETAi.columns:
+        ETAi['Calificacion SAC'] = ((ETAi['Cumple'] / (ETAi['Cumple'] + ETAi['No Cumple'])) * 10).round(0).astype(int)
+    else:
+        print("Las columnas necesarias 'Cumple' o 'No Cumple' no están presentes.")
+        return ETAi  # Retorna el DataFrame sin la columna 'Calificacion SAC'
+
+    # Cambiar los nombres de las columnas para reflejar los datos correctamente
     ETAi.rename(columns={
-    'Cumple': 'Cumple ETA',
-    'No Cumple': 'No Cumple ETA'
+        'Cumple': 'Cumple ETA',
+        'No Cumple': 'No Cumple ETA'
     }, inplace=True)
 
-
-    return ETAi 
+    return ETAi

@@ -5,6 +5,9 @@ from datetime import datetime, timedelta
 from db_manager import fetch_data, fetch_data_PRO
 from planasPorAsignar import procesar_planas, procesar_operadores
 
+
+
+
 asignacionDIA = Blueprint('asignacionDIA', __name__)
 @asignacionDIA.route('/')
 def index():
@@ -20,7 +23,7 @@ def index():
     return asignacionF
     
 def cargar_datos():
-    consulta_planas = "SELECT * FROM DimTableroControlRemolque WHERE PosicionActual = 'NYC' AND Estatus = 'CARGADO EN PATIO' AND Ruta IS NOT NULL AND CiudadDestino != 'MONTERREY'AND CiudadDestino != 'GUADALUPE'"
+    consulta_planas = "SELECT * FROM DimTableroControlRemolque WHERE PosicionActual = 'NYC' AND Estatus = 'CARGADO EN PATIO' AND Ruta IS NOT NULL AND CiudadDestino != 'MONTERREY'AND CiudadDestino != 'GUADALUPE'AND CiudadDestino != 'APODACA'"
     consulta_operadores = "SELECT * FROM DimTableroControl"
     ConsultaCartas = f"SELECT * FROM ReporteCartasPorte WHERE FechaSalida > '2024-01-01'"
     ConsultaGasto= f"SELECT *   FROM DimReporteUnificado"
@@ -35,6 +38,20 @@ def cargar_datos():
     Bloqueo = fetch_data(ConsultaBloqueo)
     ETAs = fetch_data(ConsultaETA)
     
+    
+    file_path = r'C:\Users\hernandezm\Desktop\DBasignacion.xlsx'
+    # Cargar los datos de la hoja 'DB'
+    data = pd.read_excel(file_path, sheet_name='DB')
+    # Eliminar las columnas que solo contienen NaN
+    data_clean = data.dropna(axis=1, how='all')
+    
+    
+    
+    
+    planas = planas[~planas['Remolque'].isin(data_clean['Remolque'])]
+    
+    
+    
     return planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs
 
 def asignacion(planasPorAsignar, operadores_sin_asignacion, Bloqueo, asignacionesPasadasOperadores, siniestroKm, ETAs):
@@ -44,6 +61,7 @@ def asignacion(planasPorAsignar, operadores_sin_asignacion, Bloqueo, asignacione
         calOperador= pd.merge(calOperador, asignacionesPasadasOperadores, left_on='Operador', right_on='Operador', how='left')
         calOperador= pd.merge(calOperador, siniestroKm, left_on='ClaveTractor', right_on='Tractor', how='left')
         calOperador= pd.merge(calOperador, ETAs, left_on='Operador', right_on='NombreOperador', how='left')
+        calOperador['PuntosSiniestros'] = calOperador['PuntosSiniestros'].fillna(20)
 
         calOperador['ViajeCancelado']= 20
      
@@ -97,7 +115,7 @@ def asignacion(planasPorAsignar, operadores_sin_asignacion, Bloqueo, asignacione
         calOperador= pd.merge(calOperador, asignacionesPasadasOperadores, left_on='Operador', right_on='Operador', how='left')
         calOperador= pd.merge(calOperador, siniestroKm, left_on='ClaveTractor', right_on='Tractor', how='left')
         calOperador= pd.merge(calOperador, ETAs, left_on='Operador', right_on='NombreOperador', how='left')
-
+        calOperador['PuntosSiniestros'] = calOperador['PuntosSiniestros'].fillna(20)
         calOperador['ViajeCancelado']= 20
              
         calOperador['CalFinal']= calOperador['CalificacionVianjesAnteiores']+calOperador['PuntosSiniestros']+calOperador['ViajeCancelado']+calOperador['SAC']

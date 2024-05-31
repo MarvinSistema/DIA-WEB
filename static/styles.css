@@ -343,11 +343,13 @@ table {
   border-collapse: collapse;
   width: 100%;
   margin: auto;
+  border-collapse: collapse;
+  table-layout: auto;
 }
 
 th, td {
   border: 1px solid #ddd;
-  padding: 10px;
+  padding: 4px 10px;
   text-align: left;
 }
 

@@ -2,6 +2,7 @@ from flask import Flask, redirect, url_for
 from planasEnPatio import planasEnPatio
 from planasPorAsignar import planasPorAsignar
 from asignacionDIA import asignacionDIA
+from historicoAsignado import historicoAsignado
 from contact import contact
 from home import home
 from about import about
@@ -15,6 +16,7 @@ app.register_blueprint(about, url_prefix='/about')
 app.register_blueprint(contact, url_prefix='/contact')
 app.register_blueprint(planasEnPatio, url_prefix='/planasEnPatio')
 app.register_blueprint(planasPorAsignar, url_prefix='/planasPorAsignar')
+app.register_blueprint(historicoAsignado, url_prefix='/historicoAsignado')
 app.register_blueprint(asignacionDIA, url_prefix='/asignacionDIA')
 
 @app.route('/')
