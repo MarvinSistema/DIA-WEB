@@ -26,7 +26,7 @@ def cargar_datos():
         AND Ruta IS NOT NULL 
         AND CiudadDestino != 'MONTERREY'
         AND CiudadDestino != 'GUADALUPE'
-        AND CiudadDestino != 'APODACA'"
+        AND CiudadDestino != 'APODACA'
     """
     consulta_operadores = "SELECT * FROM DimTableroControl"
     ConsultaCartas = f"SELECT * FROM ReporteCartasPorte WHERE FechaSalida > '2024-01-01'"
@@ -37,7 +37,7 @@ def cargar_datos():
         SELECT NombreOperador, FechaFinalizacion, CumpleETA 
         FROM DimIndicadoresOperaciones 
         WHERE FechaSalida > '2024-01-01' 
-        AND FechaLlegada IS NOT NULL"
+        AND FechaLlegada IS NOT NULL
     """
     planas = fetch_data(consulta_planas)
     Operadores = fetch_data(consulta_operadores)
