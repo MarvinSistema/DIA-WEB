@@ -332,12 +332,6 @@ contact-container {
 
 
 
-
-
-
-
-
-
 /* Estilos generales para la tabla */
 table {
   border-collapse: collapse;
@@ -494,4 +488,22 @@ tr:hover {
   transform: translateY(-50%);
   width: 100px; /* Ancho de la flecha */
   height: auto; /* Mantiene la proporción de aspecto de la imagen */
+}
+
+.boton-asignar {
+  background-color: transparent; /* Fondo transparente para integrar mejor el botón con el diseño */
+  border: none; /* Sin bordes para un look más limpio */
+  padding: 5px 10px; /* Reducir el padding para disminuir el tamaño general del botón */
+  cursor: pointer; /* Cursor en forma de mano para interactividad */
+  border-radius: 5px; /* Bordes redondeados para suavidad */
+  transition-duration: 0.4s; /* Transición suave para efectos de mouse */
+}
+
+.boton-asignar img {
+  width: 100px; /* Reducir el tamaño de la imagen para ajustar al diseño más pequeño */
+  height: auto; /* Mantener la proporción de la imagen */
+}
+
+.boton-asignar:hover {
+  background-color: rgba(0, 212, 255, 0.8); /* Color de fondo al pasar el ratón para mantener consistencia con el estilo del header */
 }

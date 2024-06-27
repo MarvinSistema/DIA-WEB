@@ -10,16 +10,18 @@ from planasEnPatio import procesar_operadores, procesar_planas
 planasPorAsignar = Blueprint('planasPorAsignar', __name__)
 @planasPorAsignar.route('/')
 def index():
-    planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs  = cargar_datos()
+    planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs, Permisos  = cargar_datos()
     planasPorAsignar = procesar_planas(planas)
     operadores_sin_asignacion = procesar_operadores(Operadores)
     asignacionesPasadasOperadores=  asignacionesPasadasOp(Cartas)
     siniestroKm= siniestralidad(Gasto, Km)
     ETAi= eta(ETAs)
-    calOperadores = calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOperadores, siniestroKm, ETAi)
-    datos_html_operadores = calOperadores.to_html()
+    PermisosOp= permisosOperador(Permisos)
+    calOperadores, operadorNon, operadorFull = calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOperadores, siniestroKm, ETAi, PermisosOp)
+    datos_html_operadoresNon = operadorNon.to_html()
+    datos_html_operadoresFull = operadorFull.to_html()
     datos_html_empates_dobles = planasPorAsignar.to_html()
-    return render_template('planasPorAsignar.html', datos_html_operadores=datos_html_operadores, datos_html_empates_dobles=datos_html_empates_dobles)
+    return render_template('planasPorAsignar.html', operadoresNon=datos_html_operadoresNon,  operadoresFull=datos_html_operadoresFull, datos_html_empates_dobles=datos_html_empates_dobles)
 
 def cargar_datos():
     consulta_planas = """
@@ -31,6 +33,7 @@ def cargar_datos():
         AND CiudadDestino != 'MONTERREY'
         AND CiudadDestino != 'GUADALUPE'
         AND CiudadDestino != 'APODACA'
+        AND Remolque != 'P3169'
     """
     consulta_operadores = "SELECT * FROM DimTableroControl"
     ConsultaCartas = f"SELECT * FROM ReporteCartasPorte WHERE FechaSalida > '2024-01-01'"
@@ -43,6 +46,7 @@ def cargar_datos():
         WHERE FechaSalida > '2024-01-01' 
         AND FechaLlegada IS NOT NULL
         """
+    ConsultaPermiso = "SELECT NoOperador, Nombre, Activo, FechaBloqueo  FROM DimBloqueosTrafico"
     planas = fetch_data(consulta_planas)
     Operadores = fetch_data(consulta_operadores)
     Cartas = fetch_data(ConsultaCartas)
@@ -50,15 +54,9 @@ def cargar_datos():
     Km = fetch_data(ConsultaKm)
     Bloqueo = fetch_data(ConsultaBloqueo)
     ETAs = fetch_data(ConsultaETA)
+    Permisos = fetch_data(ConsultaPermiso)
     
-    file_path = r'C:\Users\hernandezm\Desktop\DBasignacion.xlsx'
-    # Cargar los datos de la hoja 'DB'
-    data = pd.read_excel(file_path, sheet_name='DB')
-    # Eliminar las columnas que solo contienen NaN
-    data_clean = data.dropna(axis=1, how='all')
-    planas = planas[~planas['Remolque'].isin(data_clean['Remolque'])]
-    
-    return planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs
+    return planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs, Permisos
 
 def procesar_planas(planas):
     """
@@ -334,27 +332,69 @@ def procesar_planas(planas):
         df_concatenado.index = df_concatenado.index + 1
         
 
+        
         return df_concatenado
     
     return matchFinal(planas)
 
-def calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOp, siniestroKm, ETAi):
+def calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOp, siniestroKm, ETAi, PermisosOp):
     calOperador= operadores_sin_asignacion.copy()
     calOperador= pd.merge(operadores_sin_asignacion, Bloqueo, left_on='Operador', right_on='NombreOperador', how='left')
     calOperador= pd.merge(calOperador, asignacionesPasadasOp, left_on='Operador', right_on='Operador', how='left')
     calOperador= pd.merge(calOperador, siniestroKm, left_on='Tractor', right_on='Tractor', how='left')
     calOperador= pd.merge(calOperador, ETAi, left_on='Operador', right_on='NombreOperador', how='left')
+    calOperador= pd.merge(calOperador, PermisosOp, left_on='Operador', right_on='Nombre', how='left')
     calOperador['ViajeCancelado']= 20
-    
-    calOperador['CalFinal']= calOperador['CalificacionVianjesAnteiores']+calOperador['PuntosSiniestros']+calOperador['Calificacion SAC']+calOperador['ViajeCancelado']
-    calOperador = calOperador[['FechaIngreso','Operador','Tractor','UOperativa_x', 'Tiempo Disponible', 'OperadorBloqueado', 
+
+    # Generar números aleatorios entre 25 y 50
+    random_values = np.random.randint(25, 51, size=len(calOperador))
+    # Convertir el ndarray en una serie de pandas
+    random_series = pd.Series(random_values, index=calOperador.index)
+    # Reemplazar los valores nulos con los valores aleatorios generados
+    calOperador['CalificacionVianjesAnteiores'] = calOperador['CalificacionVianjesAnteiores'].fillna(random_series)
+
+
+    #calOperador['CalFinal']= calOperador['CalificacionVianjesAnteiores']+calOperador['PuntosSiniestros']+calOperador['Calificacion SAC']+calOperador['ViajeCancelado']
+    calOperador['CalFinal'] = (
+    calOperador['CalificacionVianjesAnteiores'] +
+    calOperador['PuntosSiniestros'] +
+    calOperador['Calificacion SAC'] +
+    calOperador['ViajeCancelado'] +
+    (calOperador['Tiempo Disponible'] * 0.4)
+    )
+    calOperador = calOperador[['FechaIngreso', 'Operador', 'Activo_y','Tractor', 'UOperativa_x', 'Tiempo Disponible', 'OperadorBloqueado', 
         'Bueno','Regular', 'Malo', 'CalificacionVianjesAnteiores', 'Siniestralidad', 'PuntosSiniestros', 'Cumple ETA', 'No Cumple ETA',
         'Calificacion SAC', 'ViajeCancelado', 'CalFinal']]
+    calOperador = calOperador.rename(columns={
+    'UOperativa_x': 'Operativa',
+    'OperadorBloqueado': 'Bloqueado Por Seguridad',
+    'CalificacionVianjesAnteiores': 'Calificacion ViajesAnteiores',
+    'PuntosSiniestros': 'Puntos Siniestros',
+    'ViajeCancelado': 'Viaje Cancelado',
+    'Activo_y': 'Permiso'
+    })
+
     calOperador= calOperador.dropna(subset=['FechaIngreso'])
-    calOperador['PuntosSiniestros'] = calOperador['PuntosSiniestros'].fillna(20)
+    calOperador['Puntos Siniestros'] = calOperador['Puntos Siniestros'].fillna(20)
+    calOperador['Permiso'] = calOperador['Permiso'].fillna('No')
+    calOperador.rename(columns={
+        'Viaje Cancelado': 'Actitud'
+        }, inplace=True)
     
+    operadorNon = calOperador[calOperador ['Operativa'].isin([ 'U.O. 15 ACERO (ENCORTINADOS)', 'U.O. 41 ACERO LOCAL (BIG COIL)', 'U.O. 52 ACERO (ENCORTINADOS SCANIA)'])]
+    operadorFull = calOperador[calOperador['Operativa'].isin(['U.O. 01 ACERO', 'U.O. 02 ACERO', 'U.O. 03 ACERO', 'U.O. 04 ACERO', 'U.O. 07 ACERO','U.O. 39 ACERO'])]
+
+    operadorFull = operadorFull.sort_values(by=['Bloqueado Por Seguridad', 'CalFinal'], ascending=[True, False])
+    operadorNon = operadorNon.sort_values(by=['Bloqueado Por Seguridad', 'CalFinal'], ascending=[True, False])
+
+    operadorFull = operadorFull.reset_index(drop=True)
+    operadorFull.index = operadorFull.index + 1
     
-    return calOperador
+    operadorNon = operadorNon.reset_index(drop=True)
+    operadorNon.index = operadorNon.index + 1
+
+
+    return calOperador, operadorNon, operadorFull
 
 def asignacionesPasadasOp(Cartas):
     CP= Cartas.copy()
@@ -487,6 +527,12 @@ def siniestralidad(Gasto, Km):
     #voy a pasarlo a un dataframe 
     K = K.reset_index()
     return K
+
+def permisosOperador(Permisos):
+    Permisos= Permisos.sort_values(by=['Nombre', 'FechaBloqueo'], ascending=[False, False])
+    Permisos= Permisos.drop_duplicates(subset='Nombre', keep='first')
+    Permisos = Permisos.query('Activo == "Si" & ~(Activo == "No")')
+    return Permisos
 
 def eta(ETAi):
     # Intentar crear una tabla pivote para contar la cantidad de 'Bueno', 'Malo' y 'Regular' para cada operador

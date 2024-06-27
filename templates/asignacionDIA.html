@@ -17,19 +17,18 @@
         <a href="/contact">CONTACT</a>
     </div>
 
-
-<div class="contenedor-principal">
-    <div class="titulo-tabla-container">
-        <h1>PLANAS POR ASIGNAR</h1>
-        <!-- Aquí se insertarán los datos renderizados -->
-        {{ datos_html|safe }}
+    <div class="contenedor-principal">
+        <div class="titulo-tabla-container">
+            <h1>PLANAS POR ASIGNAR</h1>
+            <!-- Aquí se insertarán los datos renderizados -->
+            {{ datos_html|safe }}
+        </div>
+        <div class="contenedor-botones">
+            <a href="/planasPorAsignar">
+                <img src="{{ url_for('static', filename='images/flechaIzquierda.png') }}" alt="Flecha" class="flecha-izquierda">
+            </a>
+        </div>
     </div>
-    <div class="contenedor-botones">
-        <a href="/planasPorAsignar">
-            <img src="{{ url_for('static', filename='images/flechaIzquierda.png') }}" alt="Flecha" class="flecha-izquierda">
-        </a>
-    </div>
-</div>
 
 </body>
 </html>
