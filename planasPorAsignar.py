@@ -6,6 +6,7 @@ from sklearn.metrics import DistanceMetric
 import networkx as nx
 from db_manager import fetch_data, fetch_data_PRO
 from planasEnPatio import procesar_operadores, procesar_planas
+from itertools import combinations
 
 planasPorAsignar = Blueprint('planasPorAsignar', __name__)
 @planasPorAsignar.route('/')
@@ -69,7 +70,7 @@ def procesar_planas(planas):
     pd.DataFrame: DataFrame con las combinaciones de viajes optimizadas.
     """  
     # Constantes
-    distanciaMaxima = 220
+    distanciaMaxima = 11220
     hourasMaxDifDestino = 21
     hourasMaxNones = 22
 
@@ -206,13 +207,13 @@ def procesar_planas(planas):
             combined_df['IDe'] = np.nan 
 
         else:
-            combined_df = pd.merge(noAsignadas, paresAdiferenteCiudad, how='left', on='Destino')    
+            combined_df = pd.merge(noAsignadas, paresAdiferenteCiudad, how='left', left_on='City', right_on='Destino')
             combined_df = combined_df [['Remolque', 'Ruta', 'ValorViaje', 'IDe', 'FechaEstatus']]
             combined_df.sort_values(by= 'IDe', ascending=True, inplace=True)
             
 
             # Generar todas las combinaciones únicas de índices de las planas sin asignar a diferente destino
-            #combinaciones_indices = list(combinations(combined_df.index, 2))
+            combinaciones_indices = list(combinations(combined_df.index, 2))
 
             # Crear una lista para almacenar las combinaciones únicas sin repetición de remolques
             filas_empate_doble = []
@@ -232,6 +233,8 @@ def procesar_planas(planas):
             # Crear un nuevo DataFrame con las combinaciones únicas sin repetición de remolques
             df_empates_dobles = pd.DataFrame(filas_empate_doble, columns=['IDe', 'remolque_a', 'remolque_b', 'ValorViaje_a','ValorViaje_b','Fecha Estatus_a', 'Fecha Estatus_b', 'Ruta1', 'Ruta2'])
 
+            u=df_empates_dobles.copy()
+            
             # Crea una columna nueva y luego seleccionar columnas
             df_empates_dobles['Ruta'] = df_empates_dobles.apply(lambda x: f"{x['Ruta1']} | {x['Ruta2']}", axis=1)
             df_empates_dobles = df_empates_dobles[['remolque_a', 'remolque_b', 'ValorViaje_a', 'ValorViaje_b', 'Fecha Estatus_a', 'Fecha Estatus_b', 'Ruta']]
@@ -243,22 +246,25 @@ def procesar_planas(planas):
             df_empates_dobles['Fecha Más Antigua'] = np.where(df_empates_dobles['Fecha Estatus_a'] < df_empates_dobles['Fecha Estatus_b'],
                                                     df_empates_dobles['Fecha Estatus_a'],
                                                         df_empates_dobles['Fecha Estatus_b'])
-            limite = ahora - timedelta(hourasMaxDifDestino)
+            limite = ahora - timedelta(hours=hourasMaxDifDestino)
 
             #Filtrar el DataFrame para quedarte solo con las filas cuya 'Fecha Estatus_a' sea mayor a 24 horas atrás
             df_empates_dobles= df_empates_dobles[df_empates_dobles['Fecha Más Antigua'] < limite]
-            df_empates_dobles.drop('Fecha Más Antigua', axis=1, inplace=True)
+            #df_empates_dobles.drop('Fecha Más Antigua', axis=1, inplace=True)
 
             
             diferentesDestino_df = df_empates_dobles.copy()
 
+
         return diferentesDestino_df, combined_df
-            
+    
+    
+    
     def nones(combined_df):
         #Planas sin pares al mismo destino a destinos cercanos
         nones_df= combined_df[pd.isna(combined_df['IDe'])]
         ahora = datetime.now()
-        limite = ahora - timedelta(hourasMaxNones)
+        limite = ahora - timedelta(hours=hourasMaxNones)
 
         #Filtrar el DataFrame para quedarte solo con las filas cuya 'Fecha Estatus_a' sea mayor a 24 horas atrás
         nones_df= nones_df[nones_df['FechaEstatus'] < limite]
@@ -335,8 +341,9 @@ def procesar_planas(planas):
         
         return df_concatenado
     
+   
     return matchFinal(planas)
-
+    
 def calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOp, siniestroKm, ETAi, PermisosOp):
     calOperador= operadores_sin_asignacion.copy()
     calOperador= pd.merge(operadores_sin_asignacion, Bloqueo, left_on='Operador', right_on='NombreOperador', how='left')
