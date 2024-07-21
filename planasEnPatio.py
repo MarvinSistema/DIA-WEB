@@ -4,6 +4,7 @@ from db_manager import fetch_data, fetch_data_DIA
 import gdown
 import io
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 
 planasEnPatio = Blueprint('planasEnPatio', __name__)
 @planasEnPatio.route('/')
@@ -16,26 +17,26 @@ def index():
     return render_template('planasEnPatio.html', datos_html= html_empates_dobles)
 
 def cargar_datos():
-    consulta_planas = """
-        SELECT *
-        FROM DimTableroControlRemolque_CPatio
-        WHERE PosicionActual = 'NYC'
-        AND Estatus = 'CARGADO EN PATIO'
-        AND Ruta IS NOT NULL
-        AND CiudadDestino != 'MONTERREY'
-        AND CiudadDestino != 'GUADALUPE'
-        AND CiudadDestino != 'APODACA'
-    """
-    consulta_operadores = """
-        SELECT * 
-        FROM DimTableroControl_Disponibles
-        """
-    ConsultaDBDIA= "SELECT * FROM DIA_NYC"
-    
-    planas = fetch_data(consulta_planas)
-    Operadores = fetch_data(consulta_operadores)  
-    DataDIA= fetch_data_DIA(ConsultaDBDIA)
-    return planas, Operadores, DataDIA
+    consultas = [
+        ("fetch_data", """
+            SELECT *
+            FROM DimTableroControlRemolque_CPatio
+            WHERE PosicionActual = 'NYC'
+            AND Estatus = 'CARGADO EN PATIO'
+            AND Ruta IS NOT NULL
+            AND CiudadDestino NOT IN ('MONTERREY', 'GUADALUPE', 'APODACA')
+        """),
+        ("fetch_data", "SELECT * FROM DimTableroControl_Disponibles"),
+        ("fetch_data_DIA", "SELECT * FROM DIA_NYC")
+    ]
+
+    with ThreadPoolExecutor() as executor:
+        # Lanzar cada consulta en un hilo separado
+        futures = [executor.submit(globals()[func], sql) for func, sql in consultas]
+        # Esperar a que todas las consultas se completen y recoger los resultados
+        results = [future.result() for future in futures]
+
+    return tuple(results)
 
 def planas_en_patio(planas, DataDIA, planasSAC):
     planas['Horas en patio_Sistema'] = ((datetime.now() - planas['FechaEstatus']).dt.total_seconds() / 3600.0).round(1)

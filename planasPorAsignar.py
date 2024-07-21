@@ -9,6 +9,7 @@ from planasEnPatio import procesar_operadores, planas_sac
 from itertools import combinations
 import requests
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 planasPorAsignar = Blueprint('planasPorAsignar', __name__)
 @planasPorAsignar.route('/')
@@ -41,93 +42,83 @@ def index():
     empates_dobles = matchPlanas.to_html()
     return render_template('planasPorAsignar.html',  operadoresFull=operadoresFull, datos_html_empates_dobles=empates_dobles)
 
+
 def cargar_datos():
-    consulta_planas = """
-        SELECT *
-        FROM DimTableroControlRemolque_CPatio
-        WHERE PosicionActual = 'NYC'
-        AND Estatus = 'CARGADO EN PATIO'
-        AND Ruta IS NOT NULL
-        AND CiudadDestino != 'MONTERREY'
-        AND CiudadDestino != 'GUADALUPE'
-        AND CiudadDestino != 'APODACA'
-        AND Remolque != 'P3169'
-    """
-    consulta_operadores = """
-        SELECT * 
-        FROM DimTableroControl_Disponibles
-        """
-    ConsultaCartas = """
-        SELECT IdViaje, FechaSalida, Operador, Tractor, UnidadOperativa, Cliente, SubtotalMXN, Ruta, IdConvenio 
-        FROM ReporteCartasPorte 
-        WHERE FechaSalida > DATEADD(day, -90, GETDATE())
-        """
-    ConsultaGasto= """
-        SELECT Reporte, Empresa, Tractor, FechaSiniestro, TotalFinal
-        FROM DimReporteUnificado
-        WHERE FechaSiniestro > DATEADD(day, -90, GETDATE())
-        """
-    ConsultaKm = """
-        SELECT NombreOperador, FechaPago, Tractor, KmsReseteo  
-        FROM DimRentabilidadLiquidacion 
-        WHERE FechaPago > DATEADD(day, -90, GETDATE())
-        """
-    ConsultaBloqueo = """
-        SELECT NombreOperador, Activo, OperadorBloqueado
-        FROM DimOperadores
-        Where Activo = 'Si'
-        """
-    ConsultaETA = """
-        SELECT NombreOperador, FechaFinalizacion, CumpleETA 
-        FROM   DimIndicadoresOperaciones 
-        WHERE FechaLlegada > DATEADD(day, -90, GETDATE()) 
-        AND FechaLlegada IS NOT NULL
-        """
-    ConsultaPermiso = """
-        SELECT NoOperador, Nombre, Activo, FechaBloqueo
-        FROM DimBloqueosTrafico
-        """
-    ConsultaDBDIA= """
-        SELECT * 
-        FROM DIA_NYC
-        """
-    ConsultaMttoPrev = """
-        SELECT  ClaveTractor, UltimoMantto, Descripcion, VencimientoD
-        FROM   DimPreventivoFlotillas
-        WHERE VencimientoD>0.97
-        """
-    ConsultaCheckTaller = """
-        SELECT Tractor,	UnidadOperativa, Estatus, FechaEstatus
-        FROM (
-            SELECT *,
-                ROW_NUMBER() OVER (PARTITION BY Tractor ORDER BY FechaEstatus DESC) as rn
-            FROM DimDashboardHistorico
-            WHERE Tractor != ''
-        ) t
-        WHERE rn <= 5
-        AND (Estatus= 'Check Express' OR Estatus= 'En Taller')
-        ORDER BY Tractor ASC, FechaEstatus DESC;
-        """
-    ConsultaOrOpen = """
-        SELECT  IdDimOrdenReparacion, IdOR, TipoEquipo, ClaveEquipo, FechaCreacion, FechaFinalizacion
-        FROM    DimOrdenesReparacion
-        WHERE   FechaFinalizacion IS NULL AND TipoEquipo = 'Tractor'
-        """
-    
-    planas = fetch_data(consulta_planas)
-    Operadores = fetch_data(consulta_operadores)
-    Cartas = fetch_data(ConsultaCartas)
-    Gasto = fetch_data_PRO(ConsultaGasto)
-    Km = fetch_data(ConsultaKm)
-    Bloqueo = fetch_data(ConsultaBloqueo)
-    ETAs = fetch_data(ConsultaETA)
-    Permisos = fetch_data(ConsultaPermiso)
-    DataDIA= fetch_data_DIA(ConsultaDBDIA)
-    MttoPrev= fetch_data(ConsultaMttoPrev)
-    CheckTaller= fetch_data(ConsultaCheckTaller)
-    OrAbierta=  fetch_data(ConsultaOrOpen)
-    
-    return planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs, Permisos, DataDIA, MttoPrev, CheckTaller, OrAbierta
+    consultas = [
+        ("fetch_data", """
+            SELECT *
+            FROM DimTableroControlRemolque_CPatio
+            WHERE PosicionActual = 'NYC'
+            AND Estatus = 'CARGADO EN PATIO'
+            AND Ruta IS NOT NULL
+            AND CiudadDestino NOT IN ('MONTERREY', 'GUADALUPE', 'APODACA')
+            AND Remolque != 'P3169'
+        """),
+        ("fetch_data", "SELECT * FROM DimTableroControl_Disponibles"),
+        ("fetch_data", """
+            SELECT IdViaje, FechaSalida, Operador, Tractor, UnidadOperativa, Cliente, SubtotalMXN, Ruta, IdConvenio 
+            FROM ReporteCartasPorte 
+            WHERE FechaSalida > DATEADD(day, -90, GETDATE())
+        """),
+        ("fetch_data_PRO", """
+            SELECT Reporte, Empresa, Tractor, FechaSiniestro, TotalFinal
+            FROM DimReporteUnificado
+            WHERE FechaSiniestro > DATEADD(day, -90, GETDATE())
+        """),
+        ("fetch_data", """
+            SELECT NombreOperador, FechaPago, Tractor, KmsReseteo  
+            FROM DimRentabilidadLiquidacion 
+            WHERE FechaPago > DATEADD(day, -90, GETDATE())
+        """),
+        ("fetch_data", """
+            SELECT NombreOperador, Activo, OperadorBloqueado
+            FROM DimOperadores
+            WHERE Activo = 'Si'
+        """),
+        ("fetch_data", """
+            SELECT NombreOperador, FechaFinalizacion, CumpleETA 
+            FROM DimIndicadoresOperaciones 
+            WHERE FechaLlegada > DATEADD(day, -90, GETDATE()) 
+            AND FechaLlegada IS NOT NULL
+        """),
+        ("fetch_data", """
+            SELECT NoOperador, Nombre, Activo, FechaBloqueo
+            FROM DimBloqueosTrafico
+        """),
+        ("fetch_data_DIA", "SELECT * FROM DIA_NYC"),
+        ("fetch_data", """
+            SELECT ClaveTractor, UltimoMantto, Descripcion, VencimientoD
+            FROM DimPreventivoFlotillas
+            WHERE VencimientoD>0.97
+        """),
+        ("fetch_data", """
+            SELECT Tractor, UnidadOperativa, Estatus, FechaEstatus
+            FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER (PARTITION BY Tractor ORDER BY FechaEstatus DESC) as rn
+                FROM DimDashboardHistorico
+                WHERE Tractor != ''
+            ) t
+            WHERE rn <= 5
+            AND (Estatus = 'Check Express' OR Estatus = 'En Taller')
+            ORDER BY Tractor ASC, FechaEstatus DESC
+        """),
+        ("fetch_data", """
+            SELECT IdDimOrdenReparacion, IdOR, TipoEquipo, ClaveEquipo, FechaCreacion, FechaFinalizacion
+            FROM DimOrdenesReparacion
+            WHERE FechaFinalizacion IS NULL AND TipoEquipo = 'Tractor'
+        """)
+    ]
+
+    with ThreadPoolExecutor() as executor:
+        # Lanzar cada consulta en un hilo separado
+        futures = [executor.submit(globals()[func], sql) for func, sql in consultas]
+        # Esperar a que todas las consultas se completen y recoger los resultados
+        results = [future.result() for future in futures]
+
+    return tuple(results)
+
+
 
 def procesar_planas(planas, DataDIA, planasSAC):
     """
