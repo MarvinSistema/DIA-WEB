@@ -23,19 +23,11 @@
         </a>
         <h1>Planas a Asignar</h1>
         {{ datos_html_empates_dobles|safe }}
-        <a href="/asignacionDIA" class="flecha-derecha">
-            <img src="{{ url_for('static', filename='images/flechaDerecha.png') }}" alt="Flecha">
-        </a><br>
     </div>
     </div>
         <div class="titulo-tabla-container_b">
         <h1>Operadores Full Disponibles</h1>
         {{ operadoresFull|safe }}
-        <hr>
-    <div class="titulo-tabla-container_b">
-        <h1>Operadores Non Disponibles</h1>
-        {{ operadoresNon|safe }}
-    </div>
     <br><br><br>
     
 </body>

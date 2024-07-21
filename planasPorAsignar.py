@@ -4,30 +4,47 @@ from datetime import datetime, timedelta
 from flask import render_template, Blueprint
 from sklearn.metrics import DistanceMetric
 import networkx as nx
-from db_manager import fetch_data, fetch_data_PRO
-from planasEnPatio import procesar_operadores, procesar_planas
+from db_manager import fetch_data, fetch_data_PRO, fetch_data_DIA
+from planasEnPatio import procesar_operadores, planas_sac
 from itertools import combinations
+import requests
+import os
 
 planasPorAsignar = Blueprint('planasPorAsignar', __name__)
 @planasPorAsignar.route('/')
 def index():
-    planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs, Permisos  = cargar_datos()
-    planasPorAsignar = procesar_planas(planas)
-    operadores_sin_asignacion = procesar_operadores(Operadores)
+    planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs, Permisos,\
+    DataDIA, MttoPrev, CheckTaller, OrAbierta  =  \
+        cargar_datos()
+    planasSAC = planas_sac()
+    operadores_sin_asignacion = procesar_operadores(Operadores, DataDIA)
+    matchPlanas= procesar_planas(planas, DataDIA, planasSAC)
     asignacionesPasadasOperadores=  asignacionesPasadasOp(Cartas)
     siniestroKm= siniestralidad(Gasto, Km)
     ETAi= eta(ETAs)
     PermisosOp= permisosOperador(Permisos)
-    calOperadores, operadorNon, operadorFull = calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOperadores, siniestroKm, ETAi, PermisosOp)
-    datos_html_operadoresNon = operadorNon.to_html()
-    datos_html_operadoresFull = operadorFull.to_html()
-    datos_html_empates_dobles = planasPorAsignar.to_html()
-    return render_template('planasPorAsignar.html', operadoresNon=datos_html_operadoresNon,  operadoresFull=datos_html_operadoresFull, datos_html_empates_dobles=datos_html_empates_dobles)
+    cerca = cercaU()
+    operadorDis = calOperador(
+        operadores_sin_asignacion, 
+        Bloqueo, 
+        asignacionesPasadasOperadores, 
+        siniestroKm, 
+        ETAi, 
+        PermisosOp, 
+        cerca, 
+        DataDIA, 
+        OrAbierta,
+        MttoPrev,
+        CheckTaller
+    )
+    operadoresFull =operadorDis.to_html()
+    empates_dobles = matchPlanas.to_html()
+    return render_template('planasPorAsignar.html',  operadoresFull=operadoresFull, datos_html_empates_dobles=empates_dobles)
 
 def cargar_datos():
     consulta_planas = """
         SELECT *
-        FROM DimTableroControlRemolque
+        FROM DimTableroControlRemolque_CPatio
         WHERE PosicionActual = 'NYC'
         AND Estatus = 'CARGADO EN PATIO'
         AND Ruta IS NOT NULL
@@ -36,18 +53,67 @@ def cargar_datos():
         AND CiudadDestino != 'APODACA'
         AND Remolque != 'P3169'
     """
-    consulta_operadores = "SELECT * FROM DimTableroControl"
-    ConsultaCartas = f"SELECT * FROM ReporteCartasPorte WHERE FechaSalida > '2024-01-01'"
-    ConsultaGasto= f"SELECT *   FROM DimReporteUnificado"
-    ConsultaKm = f"SELECT *   FROM DimRentabilidadLiquidacion"
-    ConsultaBloqueo = f"SELECT *   FROM DimOperadores Where Activo = 'Si'"
+    consulta_operadores = """
+        SELECT * 
+        FROM DimTableroControl_Disponibles
+        """
+    ConsultaCartas = """
+        SELECT IdViaje, FechaSalida, Operador, Tractor, UnidadOperativa, Cliente, SubtotalMXN, Ruta, IdConvenio 
+        FROM ReporteCartasPorte 
+        WHERE FechaSalida > DATEADD(day, -90, GETDATE())
+        """
+    ConsultaGasto= """
+        SELECT Reporte, Empresa, Tractor, FechaSiniestro, TotalFinal
+        FROM DimReporteUnificado
+        WHERE FechaSiniestro > DATEADD(day, -90, GETDATE())
+        """
+    ConsultaKm = """
+        SELECT NombreOperador, FechaPago, Tractor, KmsReseteo  
+        FROM DimRentabilidadLiquidacion 
+        WHERE FechaPago > DATEADD(day, -90, GETDATE())
+        """
+    ConsultaBloqueo = """
+        SELECT NombreOperador, Activo, OperadorBloqueado
+        FROM DimOperadores
+        Where Activo = 'Si'
+        """
     ConsultaETA = """
         SELECT NombreOperador, FechaFinalizacion, CumpleETA 
-        FROM DimIndicadoresOperaciones 
-        WHERE FechaSalida > '2024-01-01' 
+        FROM   DimIndicadoresOperaciones 
+        WHERE FechaLlegada > DATEADD(day, -90, GETDATE()) 
         AND FechaLlegada IS NOT NULL
         """
-    ConsultaPermiso = "SELECT NoOperador, Nombre, Activo, FechaBloqueo  FROM DimBloqueosTrafico"
+    ConsultaPermiso = """
+        SELECT NoOperador, Nombre, Activo, FechaBloqueo
+        FROM DimBloqueosTrafico
+        """
+    ConsultaDBDIA= """
+        SELECT * 
+        FROM DIA_NYC
+        """
+    ConsultaMttoPrev = """
+        SELECT  ClaveTractor, UltimoMantto, Descripcion, VencimientoD
+        FROM   DimPreventivoFlotillas
+        WHERE VencimientoD>0.97
+        """
+    ConsultaCheckTaller = """
+        SELECT Tractor,	UnidadOperativa, Estatus, FechaEstatus
+        FROM (
+            SELECT *,
+                ROW_NUMBER() OVER (PARTITION BY Tractor ORDER BY FechaEstatus DESC) as rn
+            FROM DimDashboardHistorico
+            WHERE Tractor != ''
+        ) t
+        WHERE rn <= 5
+        AND (Estatus= 'Check Express' OR Estatus= 'En Taller')
+        ORDER BY Tractor ASC, FechaEstatus DESC;
+        """
+    ConsultaOrOpen = """
+        SELECT  IdDimOrdenReparacion, IdOR, TipoEquipo, ClaveEquipo, FechaCreacion, FechaFinalizacion
+        FROM    DimOrdenesReparacion
+        WHERE   FechaFinalizacion IS NULL AND TipoEquipo = 'Tractor'
+        """
+    
     planas = fetch_data(consulta_planas)
     Operadores = fetch_data(consulta_operadores)
     Cartas = fetch_data(ConsultaCartas)
@@ -56,10 +122,14 @@ def cargar_datos():
     Bloqueo = fetch_data(ConsultaBloqueo)
     ETAs = fetch_data(ConsultaETA)
     Permisos = fetch_data(ConsultaPermiso)
+    DataDIA= fetch_data_DIA(ConsultaDBDIA)
+    MttoPrev= fetch_data(ConsultaMttoPrev)
+    CheckTaller= fetch_data(ConsultaCheckTaller)
+    OrAbierta=  fetch_data(ConsultaOrOpen)
     
-    return planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs, Permisos
+    return planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs, Permisos, DataDIA, MttoPrev, CheckTaller, OrAbierta
 
-def procesar_planas(planas):
+def procesar_planas(planas, DataDIA, planasSAC):
     """
     Procesa las planas para encontrar combinaciones de viajes optimizados.
 
@@ -70,15 +140,14 @@ def procesar_planas(planas):
     pd.DataFrame: DataFrame con las combinaciones de viajes optimizadas.
     """  
     # Constantes
-    distanciaMaxima = 11220
+    distanciaMaxima = 220
     hourasMaxDifDestino = 21
-    hourasMaxNones = 22
-
+    planas= planas[~planas['Remolque'].isin(DataDIA['Plana'])]
+    planas = pd.merge(planas, planasSAC, on='Remolque', how='left')
+    planas['Horas en patio'] = ((datetime.now() - planas['fecha de salida']).dt.total_seconds() / 3600.0).round(1)
+  
+        
     def mismoDestino(planas):
-        # Se Ordenan
-        planas.sort_values(by=['FechaEstatus','CiudadDestino'], ascending=True, inplace=True)
-        planas.reset_index(drop=True, inplace=True)
-
         # Clasificacion de Planas
         planas['Clasificado'], _ = pd.factorize(planas['CiudadDestino'], sort=True)
 
@@ -86,7 +155,7 @@ def procesar_planas(planas):
         filas_repetidas = planas[planas.duplicated(subset='Clasificado', keep=False)]
 
         # Orden Clsificacion Planas
-        filas_repetidas = filas_repetidas.sort_values(by=['Clasificado', 'FechaEstatus'], ascending=[True, True])
+        filas_repetidas = filas_repetidas.sort_values(by=['Clasificado', 'Horas en patio'], ascending=[True, False])
 
         # Crear una lista para almacenar las combinaciones únicas sin repetición de remolques
         combinaciones_remolques  = []
@@ -104,8 +173,8 @@ def procesar_planas(planas):
                     # Agrega la combinación de filas a la lista
                     combinaciones_remolques .append([
                         row1['CiudadDestino'], 
-                        row1['FechaEstatus'], 
-                        row2['FechaEstatus'], 
+                        row1['Horas en patio'], 
+                        row2['Horas en patio'], 
                         row1['Remolque'], 
                         row2['Remolque'], 
                         row1['ValorViaje'], 
@@ -117,12 +186,14 @@ def procesar_planas(planas):
 
         # Crear un nuevo DataFrame con las combinaciones emparejadas
         df_mismoDestino = pd.DataFrame(combinaciones_remolques , columns=[
-        'Ruta', 'Fecha Estatus_a', 'Fecha Estatus_b', 
+        'Ruta', 'Horas en patio_a', 'Horas en patio_b', 
         'remolque_a','remolque_b','ValorViaje_a', 'ValorViaje_b'
         ])
         df_mismoDestino['Ruta'] = 'MONTERREY-' + df_mismoDestino['Ruta']
+        
         return df_mismoDestino, planas
-
+    
+        
     def diferentesDestino(planas):
         Ubicaciones = pd.DataFrame({
             'City': ['XALAPA,VER','AMATLANDELOSREYES', 'CUAUTLA,MORELOS','QUERETARO', 'GUADALAJARA', 'PUERTOVALLARTA', 'MAZATLAN', 'CULIACAN', 'LEON', 'MEXICO', 'SANLUISPOTOSI', 'VERACRUZ', 'TULTITLAN', 'JIUTEPEC', 'VILLAHERMOSA', 'PACHUCADESOTO', 'COLON', 'MERIDA', 'SALTILLO', 'CHIHUAHUA', 'TUXTLAGTZ', 'CORDOBA',
@@ -176,10 +247,8 @@ def procesar_planas(planas):
             matching_df['Distance'] = matching_df.apply(lambda x: G[x['City1']][x['City2']]['weight'], axis=1)
             return matching_df
 
-        
         matching_df = crear_grafo_y_emparejamientos(df, distanciaMaxima)
     
-
         # Vamos a asignar un ID igual a cada par de ciudades y mostrarlas en una sola columana
         results = []
         # Recorrer cada fila y descomponer las ciudades en filas individuales
@@ -191,13 +260,12 @@ def procesar_planas(planas):
 
         noAsignadas = PlanasTotales_no_asignadas.copy()
 
-
         #Concatenar noAsignadas con paresAdiferenteCiudad(aqui adjuntamos los ID pares de cada ciudad al dataframe de planas sn asignar)
         if 'Destino' not in paresAdiferenteCiudad.columns:
             print("No se encontraron emparejamientos o la columna 'Destino' no existe en paresAdiferenteCiudad.")
             columnas = [
                 'remolque_a', 'remolque_b', 'ValorViaje_a', 'ValorViaje_b',
-                'Fecha Estatus_a', 'Fecha Estatus_b', 'Ruta'
+                'Horas en patio_a', 'Horas en patio_b', 'Ruta'
             ]
 
             # Crear el DataFrame vacío con las columnas definidas
@@ -205,16 +273,12 @@ def procesar_planas(planas):
 
             combined_df=noAsignadas.copy()
             combined_df['IDe'] = np.nan 
-
+            
         else:
             combined_df = pd.merge(noAsignadas, paresAdiferenteCiudad, how='left', left_on='City', right_on='Destino')
-            combined_df = combined_df [['Remolque', 'Ruta', 'ValorViaje', 'IDe', 'FechaEstatus']]
+            combined_df = combined_df [['Remolque', 'Ruta', 'ValorViaje', 'IDe', 'Horas en patio']]
             combined_df.sort_values(by= 'IDe', ascending=True, inplace=True)
             
-
-            # Generar todas las combinaciones únicas de índices de las planas sin asignar a diferente destino
-            combinaciones_indices = list(combinations(combined_df.index, 2))
-
             # Crear una lista para almacenar las combinaciones únicas sin repetición de remolques
             filas_empate_doble = []
             # Iterar sobre las filas repetidas y combinarlas de dos en dos
@@ -226,67 +290,26 @@ def procesar_planas(planas):
                         
                         row2 = combined_df.iloc[i + 1]
                         
-                        filas_empate_doble.append([row1['IDe'], row1['Remolque'], row2['Remolque'], row1['ValorViaje'], row2['ValorViaje'], row1['FechaEstatus'], row2['FechaEstatus'], row1['Ruta'], row2['Ruta']])
+                        filas_empate_doble.append([row1['IDe'], row1['Remolque'], row2['Remolque'], row1['ValorViaje'], row2['ValorViaje'], row1['Horas en patio'], row2['Horas en patio'], row1['Ruta'], row2['Ruta']])
                         i += 1  # Incrementa i solo si se cumple la condición
                 i += 1  # Incrementa i en cada iteración del bucle while
 
             # Crear un nuevo DataFrame con las combinaciones únicas sin repetición de remolques
-            df_empates_dobles = pd.DataFrame(filas_empate_doble, columns=['IDe', 'remolque_a', 'remolque_b', 'ValorViaje_a','ValorViaje_b','Fecha Estatus_a', 'Fecha Estatus_b', 'Ruta1', 'Ruta2'])
+            df_empates_dobles = pd.DataFrame(filas_empate_doble, columns=['IDe', 'remolque_a', 'remolque_b', 'ValorViaje_a','ValorViaje_b','Horas en patio_a', 'Horas en patio_b', 'Ruta1', 'Ruta2'])
 
-            u=df_empates_dobles.copy()
-            
+             
             # Crea una columna nueva y luego seleccionar columnas
             df_empates_dobles['Ruta'] = df_empates_dobles.apply(lambda x: f"{x['Ruta1']} | {x['Ruta2']}", axis=1)
-            df_empates_dobles = df_empates_dobles[['remolque_a', 'remolque_b', 'ValorViaje_a', 'ValorViaje_b', 'Fecha Estatus_a', 'Fecha Estatus_b', 'Ruta']]
-
-
-            # No se asignan si tienen menos de 22 horas en patio
-            ahora = datetime.now()
-            #Obtener la fecha mas antigua entre las dos planas
-            df_empates_dobles['Fecha Más Antigua'] = np.where(df_empates_dobles['Fecha Estatus_a'] < df_empates_dobles['Fecha Estatus_b'],
-                                                    df_empates_dobles['Fecha Estatus_a'],
-                                                        df_empates_dobles['Fecha Estatus_b'])
-            limite = ahora - timedelta(hours=hourasMaxDifDestino)
-
-            #Filtrar el DataFrame para quedarte solo con las filas cuya 'Fecha Estatus_a' sea mayor a 24 horas atrás
-            df_empates_dobles= df_empates_dobles[df_empates_dobles['Fecha Más Antigua'] < limite]
-            #df_empates_dobles.drop('Fecha Más Antigua', axis=1, inplace=True)
-
+            df_empates_dobles = df_empates_dobles[['remolque_a', 'remolque_b', 'ValorViaje_a', 'ValorViaje_b', 'Horas en patio_a', 'Horas en patio_b', 'Ruta']]
             
-            diferentesDestino_df = df_empates_dobles.copy()
+            return df_empates_dobles, combined_df
 
-
-        return diferentesDestino_df, combined_df
-    
-    
-    
-    def nones(combined_df):
-        #Planas sin pares al mismo destino a destinos cercanos
-        nones_df= combined_df[pd.isna(combined_df['IDe'])]
-        ahora = datetime.now()
-        limite = ahora - timedelta(hours=hourasMaxNones)
-
-        #Filtrar el DataFrame para quedarte solo con las filas cuya 'Fecha Estatus_a' sea mayor a 24 horas atrás
-        nones_df= nones_df[nones_df['FechaEstatus'] < limite]
-
-        #Renombrar columnas
-        nones_df.rename(columns={
-        'Remolque': 'remolque_a',
-        'FechaEstatus': 'Fecha Estatus_a',
-        'ValorViaje':'ValorViaje_a'
-        }, inplace=True)
-
-        return nones_df
-
+        
     def matchFinal(planas):
         # Se obtienen los dataframes de cada función
         df_mismoDestino, planas = mismoDestino(planas)
         diferentesDestino_df, combined_df = diferentesDestino(planas)
-        nones_df = nones(combined_df)
-
-        # Concatena todos los dataframes 
-        #df_concatenado = pd.concat([df_mismoDestino, diferentesDestino_df], ignore_index=True)
-
+        
         # Filtrar DataFrames vacíos o con solo valores NA
         dataframes = [df_mismoDestino, diferentesDestino_df]
         valid_dataframes = [df for df in dataframes if not df.empty and not df.isna().all().all()]
@@ -295,26 +318,10 @@ def procesar_planas(planas):
             df_concatenado = pd.concat(valid_dataframes, ignore_index=True)
         else:
             df_concatenado = pd.DataFrame()  # Crear un DataFrame vacío si no hay DataFrames válidos
+        
 
-        df_concatenado = pd.concat([df_concatenado , nones_df], ignore_index=True)
 
-        # Calcular valor total del viaje
-        df_concatenado['Monto'] = df_concatenado['ValorViaje_a'] + df_concatenado['ValorViaje_b']
-
-        # Definir la fecha y hora actual
-        ahora = datetime.now()
-
-        # Reemplazar valores NaT por la fecha y hora actual en la columna 'Fecha Estatus_b'
-        df_concatenado['Fecha Estatus_b'] = df_concatenado['Fecha Estatus_b'].fillna(ahora)
-
-        #Obtener la fecha mas antigua entre las dos planas
-        df_concatenado['Fecha Más Antigua'] = np.where(df_concatenado['Fecha Estatus_a'] < df_concatenado['Fecha Estatus_b'],
-                                                        df_concatenado['Fecha Estatus_a'],
-                                                        df_concatenado['Fecha Estatus_b'])
-
-        df_concatenado = df_concatenado.sort_values(by='Fecha Más Antigua', ascending=True)
-
-        # Crear un diccionario con las columnas seleccionadas y el valor 0 para rellenar
+       # Crear un diccionario con las columnas seleccionadas y el valor 0 para rellenar
         columns_to_fill = {
             'remolque_a': 0,
             'remolque_b': 0,
@@ -324,44 +331,59 @@ def procesar_planas(planas):
 
         # Llenar NaN con ceros solo en las columnas seleccionadas
         df_concatenado.fillna(value=columns_to_fill, inplace=True)
-
+        
         # Calcular valor total del viaje
         df_concatenado['Monto'] = df_concatenado['ValorViaje_a'] + df_concatenado['ValorViaje_b']
-        #df_concatenado['Monto'] = df_concatenado['Monto'].map('{:,.0f}'.format)
-        
+        df_concatenado['Horas en Patio'] = df_concatenado[['Horas en patio_a', 'Horas en patio_b']].max(axis=1)
+               
         #Calcular horas en patio
-        df_concatenado['Horas en Patio'] = ((ahora - df_concatenado['Fecha Más Antigua']).dt.total_seconds()/3600).round(1) 
-        df_concatenado = df_concatenado[['Ruta', 'remolque_a', 'remolque_b', 'Monto', 'Horas en Patio']]
         df_concatenado= df_concatenado[df_concatenado['Ruta'] != 'MONTERREY-ALLENDE']
-
+   
+        df_concatenado = df_concatenado.sort_values(by='Horas en Patio', ascending=False)
+        
         df_concatenado.reset_index(drop=True, inplace=True)
         df_concatenado.index = df_concatenado.index + 1
-        
-
+        df_concatenado = df_concatenado[['Ruta', 'remolque_a', 'remolque_b', 'Monto', 'Horas en Patio']]
         
         return df_concatenado
-    
    
     return matchFinal(planas)
     
-def calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOp, siniestroKm, ETAi, PermisosOp):
+def calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOp, siniestroKm, ETAi, PermisosOp, cerca, DataDIA, OrAbierta, MttoPrev, CheckTaller):
     calOperador= operadores_sin_asignacion.copy()
+    #calOperador =calOperador[calOperador['Tiempo Disponible'] > 0.2]
     calOperador= pd.merge(operadores_sin_asignacion, Bloqueo, left_on='Operador', right_on='NombreOperador', how='left')
+    calOperador= calOperador[calOperador['Tractor'].isin(cerca['cve_uni'])]
+    calOperador= calOperador[~calOperador['Operador'].isin(DataDIA['Operador'])]
     calOperador= pd.merge(calOperador, asignacionesPasadasOp, left_on='Operador', right_on='Operador', how='left')
     calOperador= pd.merge(calOperador, siniestroKm, left_on='Tractor', right_on='Tractor', how='left')
-    calOperador= pd.merge(calOperador, ETAi, left_on='Operador', right_on='NombreOperador', how='left')
     calOperador= pd.merge(calOperador, PermisosOp, left_on='Operador', right_on='Nombre', how='left')
+    calOperador= pd.merge(calOperador, ETAi, left_on='Operador', right_on='NombreOperador', how='left')
+    calOperador['OrAbierta'] = calOperador['Tractor'].apply(
+    lambda x: 'Si' if x in OrAbierta['ClaveEquipo'].values else 'No'
+    )
+    calOperador['Pasar a Mtto Preventivo'] = calOperador['Tractor'].apply(
+    lambda x: 'Si' if x in MttoPrev['ClaveTractor'].values else 'No'
+    )
+    calOperador['¿Paso por Check/Mtto?'] = calOperador['Tractor'].apply(
+    lambda x: 'Si' if x in CheckTaller['Tractor'].values else 'No'
+    )
+    
+    
+    #Control Valores FAltantes    
+    if 'Calificacion SAC' not in calOperador.columns:
+        calOperador['Calificacion SAC'] = 0  
     calOperador['ViajeCancelado']= 20
-
-    # Generar números aleatorios entre 25 y 50
+    calOperador['Activo_y'] = calOperador['Activo_y'].fillna('No')
+     # Generar números aleatorios entre 25 y 50 para op nuevos 
     random_values = np.random.randint(25, 51, size=len(calOperador))
     # Convertir el ndarray en una serie de pandas
     random_series = pd.Series(random_values, index=calOperador.index)
     # Reemplazar los valores nulos con los valores aleatorios generados
     calOperador['CalificacionVianjesAnteiores'] = calOperador['CalificacionVianjesAnteiores'].fillna(random_series)
-
-
-    #calOperador['CalFinal']= calOperador['CalificacionVianjesAnteiores']+calOperador['PuntosSiniestros']+calOperador['Calificacion SAC']+calOperador['ViajeCancelado']
+    calOperador['Puntos Siniestros'] = calOperador['PuntosSiniestros'].fillna(20)
+    
+    
     calOperador['CalFinal'] = (
     calOperador['CalificacionVianjesAnteiores'] +
     calOperador['PuntosSiniestros'] +
@@ -369,49 +391,34 @@ def calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOp, sinie
     calOperador['ViajeCancelado'] +
     (calOperador['Tiempo Disponible'] * 0.4)
     )
-    calOperador = calOperador[['FechaIngreso', 'Operador', 'Activo_y','Tractor', 'UOperativa_x', 'Tiempo Disponible', 'OperadorBloqueado', 
-        'Bueno','Regular', 'Malo', 'CalificacionVianjesAnteiores', 'Siniestralidad', 'PuntosSiniestros', 'Cumple ETA', 'No Cumple ETA',
-        'Calificacion SAC', 'ViajeCancelado', 'CalFinal']]
+    
+    
+    calOperador = calOperador[['Operador', 'Tractor', 'UOperativa', 'Activo_y', 'OperadorBloqueado', 'OrAbierta',
+        'Pasar a Mtto Preventivo', '¿Paso por Check/Mtto?',  'Tiempo Disponible', 'CalFinal']]
+    
+        
     calOperador = calOperador.rename(columns={
     'UOperativa_x': 'Operativa',
     'OperadorBloqueado': 'Bloqueado Por Seguridad',
-    'CalificacionVianjesAnteiores': 'Calificacion ViajesAnteiores',
-    'PuntosSiniestros': 'Puntos Siniestros',
-    'ViajeCancelado': 'Viaje Cancelado',
     'Activo_y': 'Permiso'
     })
 
-    calOperador= calOperador.dropna(subset=['FechaIngreso'])
-    calOperador['Puntos Siniestros'] = calOperador['Puntos Siniestros'].fillna(20)
-    calOperador['Permiso'] = calOperador['Permiso'].fillna('No')
-    calOperador.rename(columns={
-        'Viaje Cancelado': 'Actitud'
-        }, inplace=True)
+
+    calOperador =calOperador.sort_values(by=['Bloqueado Por Seguridad', 'CalFinal'], ascending=[True, False])
+    calOperador = calOperador.reset_index(drop=True)
+    calOperador.index = calOperador.index + 1
     
-    operadorNon = calOperador[calOperador ['Operativa'].isin([ 'U.O. 15 ACERO (ENCORTINADOS)', 'U.O. 41 ACERO LOCAL (BIG COIL)', 'U.O. 52 ACERO (ENCORTINADOS SCANIA)'])]
-    operadorFull = calOperador[calOperador['Operativa'].isin(['U.O. 01 ACERO', 'U.O. 02 ACERO', 'U.O. 03 ACERO', 'U.O. 04 ACERO', 'U.O. 07 ACERO','U.O. 39 ACERO'])]
-
-    operadorFull = operadorFull.sort_values(by=['Bloqueado Por Seguridad', 'CalFinal'], ascending=[True, False])
-    operadorNon = operadorNon.sort_values(by=['Bloqueado Por Seguridad', 'CalFinal'], ascending=[True, False])
-
-    operadorFull = operadorFull.reset_index(drop=True)
-    operadorFull.index = operadorFull.index + 1
-    
-    operadorNon = operadorNon.reset_index(drop=True)
-    operadorNon.index = operadorNon.index + 1
-
-
-    return calOperador, operadorNon, operadorFull
+    return calOperador
 
 def asignacionesPasadasOp(Cartas):
     CP= Cartas.copy()
     # 30 dias atras
     fecha_actual = datetime.now()
-    fecha_30_dias_atras = fecha_actual - timedelta(days=75)
+    fecha_75_dias_atras = fecha_actual - timedelta(days=75)
     # Dividir la columna 'Ruta' por '||' y luego por '-' para obtener origen
     CP[['ID1', 'Ciudad_Origen', 'Ciudad_Destino']] = CP['Ruta'].str.split(r' \|\| | - ', expand=True)
     # Filtro Mes actual, UO, ColumnasConservadas, Ciudad Origen
-    CP = CP[CP['FechaSalida'] >= fecha_30_dias_atras]
+    CP = CP[CP['FechaSalida'] >= fecha_75_dias_atras]
     CP = CP[CP['UnidadOperativa'].isin(['U.O. 01 ACERO', 'U.O. 02 ACERO', 'U.O. 03 ACERO', 'U.O. 04 ACERO', 'U.O. 39 ACERO', 'U.O. 07 ACERO', 'U.O. 15 ACERO (ENCORTINADOS)', 'U.O. 52 ACERO (ENCORTINADOS SCANIA)',  'U.O. 41 ACERO LOCAL (BIG COIL)'])]
     CP= CP[['IdViaje', 'Cliente', 'Operador', 'Ruta', 'SubtotalMXN', 'FechaSalida', 'Ciudad_Origen']]
     CP = CP[CP['Ciudad_Origen'].isin(['MONTERREY'])]
@@ -434,43 +441,20 @@ def asignacionesPasadasOp(Cartas):
     # Crear una tabla pivote para contar la cantidad de 'Bueno', 'Malo' y 'Regular' para cada operador
     CP = pd.pivot_table(CP, index='Operador', columns='TipoViaje', aggfunc='size', fill_value=0)
 
-    ''' 
-    # Calculo de Puntajes
-    CP['Puntajes'] = CP['Bueno'] - CP['Malo']
-
-    (CP['Malo']*2)
-
-    # Funsion para asiganar puntaje
-    def Puntaje(puntajes):
-        if puntajes >= 2:
-            return 30
-        elif puntajes <= -2:
-            return 50
-        else:
-            return 40
-        
-    # Asignar los puntajes por fila
-    CP['CalificacionVianjesAnteiores'] = CP['Puntajes'].apply(lambda puntajes: Puntaje(puntajes))
-    
-    # Resetear el índice para obtener 'Operador' como una columna
-    '''
-    # Define los pesos
-    P1 = 2
-    P2 = 1
+   
 
     # Calcula el puntaje bruto para cada fila
-    CP['PuntajeBruto'] = (CP['Malo'] * P1) - (CP['Bueno'] * P2)
+    CP['PuntajeBruto'] = (CP['Malo'] * 0.5)+ (CP['Regular'] * 1) + (CP['Bueno'] * 2)
 
     # Calcula el máximo y mínimo puntaje bruto que podría existir basado en los datos del DataFrame
-    max_puntaje_posible = (CP['Malo'] + CP['Bueno']) * P1
-    min_puntaje_posible = (CP['Malo'] + CP['Bueno']) * P2 * -1
+    min_puntaje_posible = CP['PuntajeBruto'].min()
+    max_value = CP['PuntajeBruto'].max()
 
-    # Determina el rango de puntaje total
-    rango_puntaje = max_puntaje_posible.max() - min_puntaje_posible.min()
-
-    # Ajusta los puntajes para que el mínimo sea 0 y normaliza a una escala de 50
-    CP['CalificacionVianjesAnteiores'] = 15+40 * (CP['PuntajeBruto'] - min_puntaje_posible.min()) / rango_puntaje
-
+    # Calcular 'CalificacionVianjesAnteiores'
+    CP['CalificacionVianjesAnteiores'] = 50 - (1 + (49 * (CP['PuntajeBruto'] - min_puntaje_posible) / (max_value - min_puntaje_posible)))
+    # Reemplazar valores infinitos por 0
+    CP['CalificacionVianjesAnteiores'] = CP['CalificacionVianjesAnteiores'].replace([float('inf'), -float('inf')], 0)
+    # Redondear y convertir a entero
     CP['CalificacionVianjesAnteiores'] = CP['CalificacionVianjesAnteiores'].round().astype(int)
 
 
@@ -543,12 +527,8 @@ def permisosOperador(Permisos):
 
 def eta(ETAi):
     # Intentar crear una tabla pivote para contar la cantidad de 'Bueno', 'Malo' y 'Regular' para cada operador
-    try:
-        ETAi = pd.pivot_table(ETAi, index='NombreOperador', columns='CumpleETA', aggfunc='size', fill_value=0)
-        ETAi = ETAi.reset_index()
-    except Exception as e:
-        print(f"Error al crear la tabla pivote: {e}")
-        return None  # Retorna None o maneja de alguna otra manera el error
+    #try:
+    ETAi = ETAi.pivot_table(index='NombreOperador', columns='CumpleETA', aggfunc='size', fill_value=0).reset_index()
 
     # Asegurar que las columnas 'Cumple' y 'No Cumple' están presentes antes de realizar cálculos
     if 'Cumple' in ETAi.columns and 'No Cumple' in ETAi.columns:
@@ -563,4 +543,45 @@ def eta(ETAi):
         'No Cumple': 'No Cumple ETA'
     }, inplace=True)
 
+    
     return ETAi
+
+def cercaU():
+    # Paso 1: Login y obtención del token
+    url_login = 'http://74.208.129.205:3000/loginUser'
+    payload_login = {
+        'Usuario':  os.getenv('USUARIOTRACK'),
+        'Password': os.getenv('PASSWORDTRACK')
+    }
+    
+    
+    # Intento de login
+    response_login = requests.post(url_login, json=payload_login)
+    if response_login.status_code != 200:
+        print("Error en la conexión para login:", response_login.status_code)
+        print("Detalle del error:", response_login.text)
+        return None
+
+    # Extracción del token
+    token = response_login.json().get('token')
+    print("Conexión exitosa para login! Token obtenido.")
+
+    # Paso 2: Obtención de datos usando el token
+    url_datos = 'http://74.208.129.205:3000/clientes/GNYC/TableroDeControlSPL'
+    headers_datos = {'Authorization': f'Bearer {token}'}
+    body_datos = {'idEmpresa': 1}
+    
+    # Solicitud de datos
+    response_datos = requests.post(url_datos, headers=headers_datos, json=body_datos)
+    if response_datos.status_code != 200:
+        print("Error en la conexión para obtener datos:", response_datos.status_code)
+        print("Detalle del error:", response_datos.text)
+        return None
+
+    # Conversión de los datos a DataFrame
+    datos_empresa = response_datos.json()
+    cerca= pd.DataFrame(datos_empresa)
+    print("Conexión exitosa para obtener datos de la empresa!")
+    cerca = cerca.loc[cerca['localizacion'] == '0.00 Km. NYC MONTERREY']
+    cerca= cerca[['cve_uni']]
+    return cerca
