@@ -19,7 +19,7 @@ def index():
         cargar_datos()
     planasSAC = planas_sac()
     operadores_sin_asignacion = procesar_operadores(Operadores, DataDIA)
-    matchPlanas= procesar_planas(planas, DataDIA, planasSAC)
+    emparejamientosPla= emparejamientosPlanas(planas, DataDIA, planasSAC)
     asignacionesPasadasOperadores=  asignacionesPasadasOp(Cartas)
     siniestroKm= siniestralidad(Gasto, Km)
     ETAi= eta(ETAs)
@@ -39,9 +39,8 @@ def index():
         CheckTaller
     )
     operadoresFull =operadorDis.to_html()
-    empates_dobles = matchPlanas.to_html()
+    empates_dobles = emparejamientosPla.to_html()
     return render_template('planasPorAsignar.html',  operadoresFull=operadoresFull, datos_html_empates_dobles=empates_dobles)
-
 
 def cargar_datos():
     consultas = [
@@ -118,228 +117,6 @@ def cargar_datos():
 
     return tuple(results)
 
-
-
-def procesar_planas(planas, DataDIA, planasSAC):
-    """
-    Procesa las planas para encontrar combinaciones de viajes optimizados.
-
-    Parámetros:
-    planas (pd.DataFrame): DataFrame con información de las planas.
-
-    Retorna:
-    pd.DataFrame: DataFrame con las combinaciones de viajes optimizadas.
-    """  
-    # Constantes
-    distanciaMaxima = 220
-    hourasMaxDifDestino = 21
-    planas= planas[~planas['Remolque'].isin(DataDIA['Plana'])]
-    planas = pd.merge(planas, planasSAC, on='Remolque', how='left')
-    planas['Horas en patio'] = ((datetime.now() - planas['fecha de salida']).dt.total_seconds() / 3600.0).round(1)
-  
-        
-    def mismoDestino(planas):
-        # Clasificacion de Planas
-        planas['Clasificado'], _ = pd.factorize(planas['CiudadDestino'], sort=True)
-
-        # Asignar cuales son las ciudades destino repetidas, estos son las planas que se pueden empatar
-        filas_repetidas = planas[planas.duplicated(subset='Clasificado', keep=False)]
-
-        # Orden Clsificacion Planas
-        filas_repetidas = filas_repetidas.sort_values(by=['Clasificado', 'Horas en patio'], ascending=[True, False])
-
-        # Crear una lista para almacenar las combinaciones únicas sin repetición de remolques
-        combinaciones_remolques  = []
-
-        # Iterar sobre las filas repetidas y combinarlas de dos en dos
-        i = 0
-        while i < len(filas_repetidas):
-            # Asegúrate de que no estás en la última fila
-            if i < len(filas_repetidas) - 1: 
-                # Verifica si la fila actual y la siguiente tienen el mismo clasificado
-                if filas_repetidas['Clasificado'].iloc[i] == filas_repetidas['Clasificado'].iloc[i + 1]:
-                    row1 = filas_repetidas.iloc[i]
-                    row2 = filas_repetidas.iloc[i + 1]
-
-                    # Agrega la combinación de filas a la lista
-                    combinaciones_remolques .append([
-                        row1['CiudadDestino'], 
-                        row1['Horas en patio'], 
-                        row2['Horas en patio'], 
-                        row1['Remolque'], 
-                        row2['Remolque'], 
-                        row1['ValorViaje'], 
-                        row2['ValorViaje']
-                    ])
-                    i += 1  # Salta la siguiente fila para evitar duplicar el emparejamiento
-
-            i += 1  # Incrementa i para continuar al siguiente par
-
-        # Crear un nuevo DataFrame con las combinaciones emparejadas
-        df_mismoDestino = pd.DataFrame(combinaciones_remolques , columns=[
-        'Ruta', 'Horas en patio_a', 'Horas en patio_b', 
-        'remolque_a','remolque_b','ValorViaje_a', 'ValorViaje_b'
-        ])
-        df_mismoDestino['Ruta'] = 'MONTERREY-' + df_mismoDestino['Ruta']
-        
-        return df_mismoDestino, planas
-    
-        
-    def diferentesDestino(planas):
-        Ubicaciones = pd.DataFrame({
-            'City': ['XALAPA,VER','AMATLANDELOSREYES', 'CUAUTLA,MORELOS','QUERETARO', 'GUADALAJARA', 'PUERTOVALLARTA', 'MAZATLAN', 'CULIACAN', 'LEON', 'MEXICO', 'SANLUISPOTOSI', 'VERACRUZ', 'TULTITLAN', 'JIUTEPEC', 'VILLAHERMOSA', 'PACHUCADESOTO', 'COLON', 'MERIDA', 'SALTILLO', 'CHIHUAHUA', 'TUXTLAGTZ', 'CORDOBA',
-                        'TOLUCA', 'CIUDADHIDALGOCHP', 'CAMPECHE', 'ATITALAQUIA', 'MATAMOROS', 'ZAPOPAN', 'CIUDADCUAHUTEMOCCHH', 'MORELIA', 'TLAXCALA', 'GUADALUPE', 'SANTACRUZSON', 'LASVARAS', 'PACHUCA', 'CIUDADJUAREZ', 'TLAJOMULCO', 'PIEDRASNEGRAS', 'RAMOSARIZPE', 'ORIZABA', 'TAPACHULA', 'TEPATITLAN', 'TLAQUEPAQUE', 'TEAPEPULCO', 'LABARCA', 'ELMARQUEZ', 'CIUDADVICTORIA', 'NUEVOLAREDO', 'TIZAYUCA,HIDALGO', 'ELSALTO', 'OCOTLANJAL', 'TEZONTEPEC', 'ZAPOTILTIC', 'PASEOELGRANDE', 'POZARICA', 'JACONA', 'FRESNILLO', 'PUEBLA', 'TUXTLAGUTIERREZ', 'PLAYADELCARMEN', 'REYNOSA', 'MEXICALI', 'TEPEJIDELORODEOCAMPO',
-                        'LEON', 'CUERNAVACA', 'CHETUMAL', 'CHIHUAHUA', 'SILAO', 'ACAPULCODEJUAREZ', 'AGUASCALIENTES', 'TIJUANA', 'OCOSINGO', 'MONCLOVA', 'OAXACA', 'SOLIDARIDAROO', 'JIUTEPEC', 'ELPRIETO', 'TORREON', 'HERMOSILLO', 'CELAYA', 'CANCUN', 'URUAPAN', 'ALTAMIRA', 'COATZACUALCOS', 'IRAPUATO', 'CASTAÑOS', 'DURANGO', 'COLON', 'CIUDADVALLLES', 'MANZANILLA', 'TAMPICO', 'GOMEZPALACIO', 'ZACATECAS', 'SALAMANCA', 'COMITANDEDOMINGUEZ', 'UMAN', 'TUXTEPEC', 'ZAMORA', 'CORDOBA', 'MONTERREY', 'PENJAMO', 'NOGALES', 'RIOBRAVO', 'CABORCA', 'FRONTERACOAHUILA', 'LOSMOCHIS', 'KANASIN', 'ARRIAGACHIAPAS', 'VALLEHERMOSA', 'SANJOSEITURBIDE', 'MAZATLAN', 'TEHUACAN', 'CHILTEPEC', 'CHILPANCINGODELOSBRAVO'],
-            'Latitude': [19.533927, 18.846950, 18.836561, 20.592275, 20.74031, 20.655893, 23.255931, 24.800964, 21.133941, 19.440265, 22.158710, 19.19002, 19.647433, 18.891529, 17.992561, 20.106154, 20.781414, 20.984380, 25.427049, 28.643361, 16.761753, 18.890666,
-                            19.271311, 14.679697, 18.833447, 20.054095, 25.845915, 20.76705, 28.431062, 19.736983, 19.500336, 25.717427, 31.239198, 28.165034, 20.13492, 31.785672, 20.488792, 28.721685, 25.594781, 18.88138, 14.950696, 20.842635, 20.646152, 19.799357, 20.313766, 20.958186, 23.786371, 27.541875, 19.863533, 20.531878, 20.380148, 19.891505, 19.641563, 20.566394, 20.576162, 19.971759, 23.215653, 19.132065, 16.801565, 20.707474, 26.128212, 32.6718, 19.943972,
-                            21.188758, 18.998997, 18.561445, 31.542897, 20.968175, 16.923231, 21.942294, 32.550529, 16.922181, 26.965938, 17.128621, 20774439, 18.932162, 22.22124, 25.622625, 29.098203, 20.581304, 21.208637, 19.432413, 22.430696, 22.430608, 20.725167, 20.828685, 24.077945, 22.027654, 20.025186, 19.127328, 22.323528, 25.629602, 22.782732, 20.604713, 16.2059, 20.914188, 18.108973, 20.018848, 18.911559, 25.79573, 20.444102, 31.331515, 26.007962, 30.751014, 26.976145, 25.831174, 20.979043, 16.251855, 25.690649, 21.020823, 23.316277, 18.504335, 18.908622, 17.592174],
-            'Longitude': [-96.909218, -96.914283, -98.944068, -100.394273, -103.31312, -105.221967, -106.412165, -107.390388, -101.661519, -99.206780, -100.970141, -96.196430, -99.164822, -99.181056, -92.942980, -98.759106, -100.047289, -89.620138, -100.985244, -106.056315, -93.108217, -96.932524,
-                            -99.667407, -92.151656, -90.286039, -99.222389, -97.503895, -103.351047, -106.83201, -101.204422, -98.158429, -100.181515, -110.59637, -105.340582, -98.772788, -106.566775, -103.445088, -100.547409, -100.900214, -97.104977, -92.254966, -102.79309, -103.317318, -98.555426, -102.541315, -100.2477, -99.16679, -99.565339, -98.976743, -103.181408, -102.777496, -98.814611, -103.449286, -100.679298, -97.430099, -102.298419, -102.850368, -98.222853, -93.116207, -87.07644, -98.343761, -115.385465, -99.339322,
-                            -101.768658, -99.257945, -88.27958, -107.90993, -101.415423, -99.825972, -102.298616, -116.875228, -92.093952, -101.400616, -97.76784, -86.986023, -99.181586, -97.917121, -103.387956, -110.978133, -100.812923, -86.837061, -102.021193, -97.947615, -94.417513, -101.378726, -101.42206, -104.66471, -99.024839, -99.025514, -104.393928, -97.88042, -103.500552, -102.573756, -101.174834, -92.132644, -89.695333, -96.141711, -102.285924, -96.98147, -100.385905, -101.730812, -110.932889, -98.122363, -112.157303, -101.436711, -108.989827, -89.5488, -93.920658, -97.810778, -100.395074, -106.478543, -97414124, -97.047666, -99.51663]
-        })
-
-        df_mismoDestino, planas  = mismoDestino(planas)
-
-        #PlanasyaAsignadas = df_mismoDestino.copy()
-        mismoDestino_concat = pd.concat([df_mismoDestino['remolque_a'], df_mismoDestino['remolque_b']], ignore_index=True)
-        PlanasTotales_no_asignadas = planas[~planas['Remolque'].isin(mismoDestino_concat)].copy()
-        PlanasTotales_no_asignadas.loc[:, 'City'] = PlanasTotales_no_asignadas['CiudadDestino'].str.replace(' ', '', regex=True)
-
-        # Merge de DataFrames, seleccionando directamente las columnas deseadas
-        df = pd.merge(PlanasTotales_no_asignadas, Ubicaciones, on='City', how='inner')[['City', 'Latitude', 'Longitude']]
-
-        # Convertir coordenadas a radianes
-        df[['Latitude', 'Longitude']] = np.radians(df[['Latitude', 'Longitude']])
-
-        # Calculate the distance matrix
-        dist = DistanceMetric.get_metric('haversine')
-        matriz_distacia = dist.pairwise(df[['Latitude', 'Longitude']]) * 6371  # Convert to kilometers
-
-        def crear_grafo_y_emparejamientos(df, distanciaMaxima):
-            G = nx.Graph()
-            added_edges = False
-            for index, row in df.iterrows():
-                G.add_node(row['City'])
-
-            for i in range(len(df)):
-                for j in range(i + 1, len(df)):
-                    if matriz_distacia[i][j] <= distanciaMaxima:
-                        G.add_edge(df.iloc[i]['City'], df.iloc[j]['City'], weight=matriz_distacia[i][j])
-                        added_edges = True
-
-            if not added_edges:
-                return pd.DataFrame()  # Retorna un DataFrame vacío si no hay aristas
-
-            matching = nx.algorithms.matching.min_weight_matching(G)
-            if not matching:
-                return pd.DataFrame()  # Asegurar que se maneje un conjunto de emparejamientos vacío
-        
-            matching_df = pd.DataFrame(list(matching), columns=['City1', 'City2'])
-            matching_df['Distance'] = matching_df.apply(lambda x: G[x['City1']][x['City2']]['weight'], axis=1)
-            return matching_df
-
-        matching_df = crear_grafo_y_emparejamientos(df, distanciaMaxima)
-    
-        # Vamos a asignar un ID igual a cada par de ciudades y mostrarlas en una sola columana
-        results = []
-        # Recorrer cada fila y descomponer las ciudades en filas individuales
-        for index, row in matching_df.iterrows():
-            results.append({'Destino': row['City1'], 'IDe': index + 1})
-            results.append({'Destino': row['City2'], 'IDe': index + 1})
-        # Convertir la lista de resultados en un nuevo DataFrame
-        paresAdiferenteCiudad= pd.DataFrame(results)
-
-        noAsignadas = PlanasTotales_no_asignadas.copy()
-
-        #Concatenar noAsignadas con paresAdiferenteCiudad(aqui adjuntamos los ID pares de cada ciudad al dataframe de planas sn asignar)
-        if 'Destino' not in paresAdiferenteCiudad.columns:
-            print("No se encontraron emparejamientos o la columna 'Destino' no existe en paresAdiferenteCiudad.")
-            columnas = [
-                'remolque_a', 'remolque_b', 'ValorViaje_a', 'ValorViaje_b',
-                'Horas en patio_a', 'Horas en patio_b', 'Ruta'
-            ]
-
-            # Crear el DataFrame vacío con las columnas definidas
-            diferentesDestino_df = pd.DataFrame(columns=columnas)
-
-            combined_df=noAsignadas.copy()
-            combined_df['IDe'] = np.nan 
-            
-        else:
-            combined_df = pd.merge(noAsignadas, paresAdiferenteCiudad, how='left', left_on='City', right_on='Destino')
-            combined_df = combined_df [['Remolque', 'Ruta', 'ValorViaje', 'IDe', 'Horas en patio']]
-            combined_df.sort_values(by= 'IDe', ascending=True, inplace=True)
-            
-            # Crear una lista para almacenar las combinaciones únicas sin repetición de remolques
-            filas_empate_doble = []
-            # Iterar sobre las filas repetidas y combinarlas de dos en dos
-            i = 0
-            while i < len(combined_df):
-                if i < len(combined_df) - 1: 
-                    if combined_df['IDe'].iloc[i] == combined_df['IDe'].iloc[i+1]:
-                        row1 = combined_df.iloc[i]
-                        
-                        row2 = combined_df.iloc[i + 1]
-                        
-                        filas_empate_doble.append([row1['IDe'], row1['Remolque'], row2['Remolque'], row1['ValorViaje'], row2['ValorViaje'], row1['Horas en patio'], row2['Horas en patio'], row1['Ruta'], row2['Ruta']])
-                        i += 1  # Incrementa i solo si se cumple la condición
-                i += 1  # Incrementa i en cada iteración del bucle while
-
-            # Crear un nuevo DataFrame con las combinaciones únicas sin repetición de remolques
-            df_empates_dobles = pd.DataFrame(filas_empate_doble, columns=['IDe', 'remolque_a', 'remolque_b', 'ValorViaje_a','ValorViaje_b','Horas en patio_a', 'Horas en patio_b', 'Ruta1', 'Ruta2'])
-
-             
-            # Crea una columna nueva y luego seleccionar columnas
-            df_empates_dobles['Ruta'] = df_empates_dobles.apply(lambda x: f"{x['Ruta1']} | {x['Ruta2']}", axis=1)
-            df_empates_dobles = df_empates_dobles[['remolque_a', 'remolque_b', 'ValorViaje_a', 'ValorViaje_b', 'Horas en patio_a', 'Horas en patio_b', 'Ruta']]
-            
-            return df_empates_dobles, combined_df
-
-        
-    def matchFinal(planas):
-        # Se obtienen los dataframes de cada función
-        df_mismoDestino, planas = mismoDestino(planas)
-        diferentesDestino_df, combined_df = diferentesDestino(planas)
-        
-        # Filtrar DataFrames vacíos o con solo valores NA
-        dataframes = [df_mismoDestino, diferentesDestino_df]
-        valid_dataframes = [df for df in dataframes if not df.empty and not df.isna().all().all()]
-        # Concatenar solo los DataFrames válidos
-        if valid_dataframes:
-            df_concatenado = pd.concat(valid_dataframes, ignore_index=True)
-        else:
-            df_concatenado = pd.DataFrame()  # Crear un DataFrame vacío si no hay DataFrames válidos
-        
-
-
-       # Crear un diccionario con las columnas seleccionadas y el valor 0 para rellenar
-        columns_to_fill = {
-            'remolque_a': 0,
-            'remolque_b': 0,
-            'ValorViaje_a': 0,
-            'ValorViaje_b': 0
-        }
-
-        # Llenar NaN con ceros solo en las columnas seleccionadas
-        df_concatenado.fillna(value=columns_to_fill, inplace=True)
-        
-        # Calcular valor total del viaje
-        df_concatenado['Monto'] = df_concatenado['ValorViaje_a'] + df_concatenado['ValorViaje_b']
-        df_concatenado['Horas en Patio'] = df_concatenado[['Horas en patio_a', 'Horas en patio_b']].max(axis=1)
-               
-        #Calcular horas en patio
-        df_concatenado= df_concatenado[df_concatenado['Ruta'] != 'MONTERREY-ALLENDE']
-   
-        df_concatenado = df_concatenado.sort_values(by='Horas en Patio', ascending=False)
-        
-        df_concatenado.reset_index(drop=True, inplace=True)
-        df_concatenado.index = df_concatenado.index + 1
-        df_concatenado = df_concatenado[['Ruta', 'remolque_a', 'remolque_b', 'Monto', 'Horas en Patio']]
-        
-        return df_concatenado
-   
-    return matchFinal(planas)
-    
 def calOperador(operadores_sin_asignacion, Bloqueo, asignacionesPasadasOp, siniestroKm, ETAi, PermisosOp, cerca, DataDIA, OrAbierta, MttoPrev, CheckTaller):
     calOperador= operadores_sin_asignacion.copy()
     #calOperador =calOperador[calOperador['Tiempo Disponible'] > 0.2]
@@ -576,3 +353,263 @@ def cercaU():
     cerca = cerca.loc[cerca['localizacion'] == '0.00 Km. NYC MONTERREY']
     cerca= cerca[['cve_uni']]
     return cerca
+
+def emparejamientosPlanas(planas, DataDIA, planasSAC):
+    
+    planas= planas[~planas['Remolque'].isin(DataDIA['Plana'])]
+    planas = pd.merge(planas, planasSAC, on='Remolque', how='left')
+    planas['Horas en patio'] = ((datetime.now() - planas['fecha de salida']).dt.total_seconds() / 3600.0).round(1)
+    planas = planas.sort_values(by='Horas en patio', ascending=False)
+    planas = planas[['IdSolicitud', 'Remolque', 'CiudadDestino', 'Horas en patio', 'ValorViaje']]
+    planas = planas[planas['CiudadDestino'] != 'ALLENDE'] 
+    
+    def emparejar_misma_ciudad_mayor23(planas):
+        # Filtrar las planas con más de 23 horas en el patio
+        df_filtrado = planas[planas['Horas en patio'] > 23]
+        
+        # Listas para almacenar las parejas formadas
+        parejas = []
+        
+        # Agrupar por 'CiudadDestino'
+        destinos_agrupados = df_filtrado.groupby('CiudadDestino')
+        
+        for destino, grupo in destinos_agrupados:
+            # Si hay más de una plana en el mismo destino
+            if len(grupo) > 1:
+                ids = grupo['IdSolicitud'].tolist()
+                remolques = grupo['Remolque'].tolist()
+                horas = grupo['Horas en patio'].tolist()
+                valores = grupo['ValorViaje'].tolist()
+                for i in range(0, len(remolques) - 1, 2):
+                    if i + 1 < len(remolques):
+                        parejas.append({
+                            'Destino': destino,
+                            'IdSolicitud1': ids[i],
+                            'IdSolicitud2': ids[i + 1],
+                            'Remolque1': remolques[i],
+                            'Remolque2': remolques[i + 1],
+                            'Horas en patio1': horas[i],
+                            'Horas en patio2': horas[i + 1],
+                            'ValorViaje1': valores[i],
+                            'ValorViaje2': valores[i + 1]
+                        })
+ 
+        
+        # Convertir las parejas a un DataFrame para mostrar el resultado
+        parejas_df = pd.DataFrame(parejas)
+        
+        
+        if not parejas_df.empty:
+            ids_emparejados = pd.concat([parejas_df['IdSolicitud1'], parejas_df['IdSolicitud2']])
+            planas_restante = planas[~planas['IdSolicitud'].isin(ids_emparejados)]
+        else:
+            planas_restante = planas.copy()
+        
+        return parejas_df, planas_restante
+    
+    def emparejar_destinos_cercanos_mayor23(planas, distancia_maxima=200):
+        
+        _, data_restante = emparejar_misma_ciudad_mayor23(planas)
+        
+       
+        Ubicaciones = pd.DataFrame({
+            'City': ['CUAUTLA', 'CDVALLES', 'ACAPULCO', 'XALAPA,VER','AMATLANDELOSREYES', 'CUAUTLA,MORELOS','QUERETARO', 'GUADALAJARA', 'PUERTOVALLARTA', 'MAZATLAN', 'CULIACAN', 'LEON', 'MEXICO', 'SANLUISPOTOSI', 'VERACRUZ', 'TULTITLAN', 'JIUTEPEC', 'VILLAHERMOSA', 'PACHUCADESOTO', 'COLON', 'MERIDA', 'SALTILLO', 'CHIHUAHUA', 'TUXTLAGTZ', 'CORDOBA',
+                        'TOLUCA', 'CIUDADHIDALGOCHP', 'CAMPECHE', 'ATITALAQUIA', 'MATAMOROS', 'ZAPOPAN', 'CIUDADCUAHUTEMOCCHH', 'MORELIA', 'TLAXCALA', 'GUADALUPE', 'SANTACRUZSON', 'LASVARAS', 'PACHUCA', 'CIUDADJUAREZ', 'TLAJOMULCO', 'PIEDRASNEGRAS', 'RAMOSARIZPE', 'ORIZABA', 'TAPACHULA', 'TEPATITLAN', 'TLAQUEPAQUE', 'TEAPEPULCO', 'LABARCA', 'ELMARQUEZ', 'CIUDADVICTORIA', 'NUEVOLAREDO', 'TIZAYUCA,HIDALGO', 'ELSALTO', 'OCOTLANJAL', 'TEZONTEPEC', 'ZAPOTILTIC', 'PASEOELGRANDE', 'POZARICA', 'JACONA', 'FRESNILLO', 'PUEBLA', 'TUXTLAGUTIERREZ', 'PLAYADELCARMEN', 'REYNOSA', 'MEXICALI', 'TEPEJIDELORODEOCAMPO',
+                        'LEON', 'CUERNAVACA', 'CHETUMAL', 'CHIHUAHUA', 'SILAO', 'ACAPULCODEJUAREZ', 'AGUASCALIENTES', 'TIJUANA', 'OCOSINGO', 'MONCLOVA', 'OAXACA', 'SOLIDARIDAROO', 'JIUTEPEC', 'ELPRIETO', 'TORREON', 'HERMOSILLO', 'CELAYA', 'CANCUN', 'URUAPAN', 'ALTAMIRA', 'COATZACUALCOS', 'IRAPUATO', 'CASTAÑOS', 'DURANGO', 'COLON', 'CIUDADVALLLES', 'MANZANILLA', 'TAMPICO', 'GOMEZPALACIO', 'ZACATECAS', 'SALAMANCA', 'COMITANDEDOMINGUEZ', 'UMAN', 'TUXTEPEC', 'ZAMORA', 'CORDOBA', 'MONTERREY', 'PENJAMO', 'NOGALES', 'RIOBRAVO', 'CABORCA', 'FRONTERACOAHUILA', 'LOSMOCHIS', 'KANASIN', 'ARRIAGACHIAPAS', 'VALLEHERMOSA', 'SANJOSEITURBIDE', 'MAZATLAN', 'TEHUACAN', 'CHILTEPEC', 'CHILPANCINGODELOSBRAVO'],
+            'Latitude': [18.831580, 22.998189, 16.889844, 19.533927, 18.846950, 18.836561, 20.592275, 20.74031, 20.655893, 23.255931, 24.800964, 21.133941, 19.440265, 22.158710, 19.19002, 19.647433, 18.891529, 17.992561, 20.106154, 20.781414, 20.984380, 25.427049, 28.643361, 16.761753, 18.890666,
+                            19.271311, 14.679697, 18.833447, 20.054095, 25.845915, 20.76705, 28.431062, 19.736983, 19.500336, 25.717427, 31.239198, 28.165034, 20.13492, 31.785672, 20.488792, 28.721685, 25.594781, 18.88138, 14.950696, 20.842635, 20.646152, 19.799357, 20.313766, 20.958186, 23.786371, 27.541875, 19.863533, 20.531878, 20.380148, 19.891505, 19.641563, 20.566394, 20.576162, 19.971759, 23.215653, 19.132065, 16.801565, 20.707474, 26.128212, 32.6718, 19.943972,
+                            21.188758, 18.998997, 18.561445, 31.542897, 20.968175, 16.923231, 21.942294, 32.550529, 16.922181, 26.965938, 17.128621, 20774439, 18.932162, 22.22124, 25.622625, 29.098203, 20.581304, 21.208637, 19.432413, 22.430696, 22.430608, 20.725167, 20.828685, 24.077945, 22.027654, 20.025186, 19.127328, 22.323528, 25.629602, 22.782732, 20.604713, 16.2059, 20.914188, 18.108973, 20.018848, 18.911559, 25.79573, 20.444102, 31.331515, 26.007962, 30.751014, 26.976145, 25.831174, 20.979043, 16.251855, 25.690649, 21.020823, 23.316277, 18.504335, 18.908622, 17.592174],
+            'Longitude': [-98.943625, -99.010334, -99.830687, -96.909218, -96.914283, -98.944068, -100.394273, -103.31312, -105.221967, -106.412165, -107.390388, -101.661519, -99.206780, -100.970141, -96.196430, -99.164822, -99.181056, -92.942980, -98.759106, -100.047289, -89.620138, -100.985244, -106.056315, -93.108217, -96.932524,
+                            -99.667407, -92.151656, -90.286039, -99.222389, -97.503895, -103.351047, -106.83201, -101.204422, -98.158429, -100.181515, -110.59637, -105.340582, -98.772788, -106.566775, -103.445088, -100.547409, -100.900214, -97.104977, -92.254966, -102.79309, -103.317318, -98.555426, -102.541315, -100.2477, -99.16679, -99.565339, -98.976743, -103.181408, -102.777496, -98.814611, -103.449286, -100.679298, -97.430099, -102.298419, -102.850368, -98.222853, -93.116207, -87.07644, -98.343761, -115.385465, -99.339322,
+                            -101.768658, -99.257945, -88.27958, -107.90993, -101.415423, -99.825972, -102.298616, -116.875228, -92.093952, -101.400616, -97.76784, -86.986023, -99.181586, -97.917121, -103.387956, -110.978133, -100.812923, -86.837061, -102.021193, -97.947615, -94.417513, -101.378726, -101.42206, -104.66471, -99.024839, -99.025514, -104.393928, -97.88042, -103.500552, -102.573756, -101.174834, -92.132644, -89.695333, -96.141711, -102.285924, -96.98147, -100.385905, -101.730812, -110.932889, -98.122363, -112.157303, -101.436711, -108.989827, -89.5488, -93.920658, -97.810778, -100.395074, -106.478543, -97414124, -97.047666, -99.51663]
+            })
+        
+        # Agregar coordenadas al DataFrame restante
+        data_restante['CiudadDestino'] = data_restante['CiudadDestino'].str.replace(' ', '')
+        data_restante = data_restante.merge(Ubicaciones, left_on='CiudadDestino', right_on='City', how='left')
+
+        # Calcular la matriz de distancias haversine
+        dist = DistanceMetric.get_metric('haversine')
+        coords = np.radians(data_restante[['Latitude', 'Longitude']])
+        matriz_distancia = dist.pairwise(coords) * 6371  # Convert to kilometers
+
+        # Listas para almacenar las parejas formadas
+        parejas = []
+
+        # Iterar sobre el DataFrame restante
+        i = 0
+        while i < len(data_restante):
+            fila_actual = data_restante.iloc[i]
+            for j in range(i + 1, len(data_restante)):
+                fila_siguiente = data_restante.iloc[j]
+                distancia = matriz_distancia[i, j]
+                if distancia <= distancia_maxima and (fila_actual['Horas en patio'] > 23 or fila_siguiente['Horas en patio'] > 23):
+                    parejas.append({
+                        'Destino1': fila_actual['CiudadDestino'],
+                        'Destino2': fila_siguiente['CiudadDestino'],
+                        'IdSolicitud1': fila_actual['IdSolicitud'],
+                        'IdSolicitud2': fila_siguiente['IdSolicitud'],
+                        'Remolque1': fila_actual['Remolque'],
+                        'Remolque2': fila_siguiente['Remolque'],
+                        'Horas en patio1': fila_actual['Horas en patio'],
+                        'Horas en patio2': fila_siguiente['Horas en patio'],
+                        'ValorViaje1': fila_actual['ValorViaje'],
+                        'ValorViaje2': fila_siguiente['ValorViaje'],
+                        'Distancia': distancia
+                    })
+                    # Eliminar las planas emparejadas del DataFrame original
+                    data_restante = data_restante.drop([i, j])
+                    data_restante = data_restante.reset_index(drop=True)
+                    matriz_distancia = np.delete(matriz_distancia, [i, j], axis=0)
+                    matriz_distancia = np.delete(matriz_distancia, [i, j], axis=1)
+                    i -= 1
+                    break
+            i += 1
+
+        # Convertir las parejas a un DataFrame para mostrar el resultado
+        parejas_df = pd.DataFrame(parejas)
+        
+        # Verificar si parejas_df está vacío antes de intentar concatenar las columnas
+        if not parejas_df.empty:
+            ids_emparejados = pd.concat([parejas_df['IdSolicitud1'], parejas_df['IdSolicitud2']])
+            planas_restante = data_restante[~data_restante['IdSolicitud'].isin(ids_emparejados)]
+        else:
+            planas_restante = data_restante.copy()
+        
+        return parejas_df, planas_restante
+    
+    def emparejar_misma_ciudad_menor23(planas):
+        # Filtrar las planas con más de 23 horas en el patio
+        _, planas_restante = emparejar_destinos_cercanos_mayor23(planas, distancia_maxima=200)
+        df_filtrado = planas_restante.copy()
+        df_filtrado = planas[planas['Horas en patio'] < 23]
+        
+        # Listas para almacenar las parejas formadas
+        parejas = []
+        
+        # Agrupar por 'CiudadDestino'
+        destinos_agrupados = df_filtrado.groupby('CiudadDestino')
+        
+        for destino, grupo in destinos_agrupados:
+            # Si hay más de una plana en el mismo destino
+            if len(grupo) > 1:
+                ids = grupo['IdSolicitud'].tolist()
+                remolques = grupo['Remolque'].tolist()
+                horas = grupo['Horas en patio'].tolist()
+                valores = grupo['ValorViaje'].tolist()
+                for i in range(0, len(remolques) - 1, 2):
+                    if i + 1 < len(remolques):
+                        parejas.append({
+                            'Destino': destino,
+                            'IdSolicitud1': ids[i],
+                            'IdSolicitud2': ids[i + 1],
+                            'Remolque1': remolques[i],
+                            'Remolque2': remolques[i + 1],
+                            'Horas en patio1': horas[i],
+                            'Horas en patio2': horas[i + 1],
+                            'ValorViaje1': valores[i],
+                            'ValorViaje2': valores[i + 1]
+                        })
+ 
+        # Convertir las parejas a un DataFrame para mostrar el resultado
+        parejas_df = pd.DataFrame(parejas)
+        
+        if not parejas_df.empty:
+            ids_emparejados = pd.concat([parejas_df['IdSolicitud1'], parejas_df['IdSolicitud2']])
+            planas_restante = planas_restante[~planas_restante['IdSolicitud'].isin(ids_emparejados)]
+        else:
+            planas_restante = planas_restante.copy()
+        
+        return parejas_df, planas_restante
+    
+    def emparejar_destinos_cercanos_menor23(distancia_maxima=200):
+        
+        _, data_restante = emparejar_misma_ciudad_menor23(planas)
+ 
+        # Agregar coordenadas al DataFrame restante
+        data_restante['CiudadDestino'] = data_restante['CiudadDestino'].str.replace(' ', '')
+        
+        if data_restante.empty:
+            return pd.DataFrame()
+        
+        # Calcular la matriz de distancias haversine
+        dist = DistanceMetric.get_metric('haversine')
+        coords = np.radians(data_restante[['Latitude', 'Longitude']])
+        matriz_distancia = dist.pairwise(coords) * 6371  # Convert to kilometers
+
+        # Listas para almacenar las parejas formadas
+        parejas = []
+
+        # Iterar sobre el DataFrame restante
+        i = 0
+        while i < len(data_restante):
+            fila_actual = data_restante.iloc[i]
+            for j in range(i + 1, len(data_restante)):
+                fila_siguiente = data_restante.iloc[j]
+                distancia = matriz_distancia[i, j]
+                if distancia <= distancia_maxima and (fila_actual['Horas en patio'] < 23 or fila_siguiente['Horas en patio'] < 23):
+                    parejas.append({
+                        'Destino1': fila_actual['CiudadDestino'],
+                        'Destino2': fila_siguiente['CiudadDestino'],
+                        'IdSolicitud1': fila_actual['IdSolicitud'],
+                        'IdSolicitud2': fila_siguiente['IdSolicitud'],
+                        'Remolque1': fila_actual['Remolque'],
+                        'Remolque2': fila_siguiente['Remolque'],
+                        'Horas en patio1': fila_actual['Horas en patio'],
+                        'Horas en patio2': fila_siguiente['Horas en patio'],
+                        'ValorViaje1': fila_actual['ValorViaje'],
+                        'ValorViaje2': fila_siguiente['ValorViaje'],
+                        'Distancia': distancia
+                    })
+                    # Eliminar las planas emparejadas del DataFrame original
+                    data_restante = data_restante.drop([i, j])
+                    data_restante = data_restante.reset_index(drop=True)
+                    matriz_distancia = np.delete(matriz_distancia, [i, j], axis=0)
+                    matriz_distancia = np.delete(matriz_distancia, [i, j], axis=1)
+                    i -= 1
+                    break
+            i += 1
+
+        # Convertir las parejas a un DataFrame para mostrar el resultado
+        parejas_df = pd.DataFrame(parejas)
+        
+        # Verificar si parejas_df está vacío antes de intentar concatenar las columnas
+        if not parejas_df.empty:
+            ids_emparejados = pd.concat([parejas_df['IdSolicitud1'], parejas_df['IdSolicitud2']])
+            planas_restante = data_restante[~data_restante['IdSolicitud'].isin(ids_emparejados)]
+        else:
+            planas_restante = data_restante.copy()
+        
+        return parejas_df
+       
+    def emparejamiento_fin(planas):
+        r1,_ = emparejar_misma_ciudad_mayor23(planas)
+        r2,_ = emparejar_destinos_cercanos_mayor23(planas, distancia_maxima=200)
+        r3,_ = emparejar_misma_ciudad_menor23(planas)
+        r4 = emparejar_destinos_cercanos_menor23(distancia_maxima=200)
+        rf = pd.concat([r1, r2, r3, r4], ignore_index=True)
+        
+        def combinar_destinos(row):
+            if pd.isna(row['Destino1']) and pd.isna(row['Destino2']):
+                return row['Destino'] if pd.notna(row['Destino']) else ''
+            elif pd.isna(row['Destino1']):
+                return row['Destino2']
+            elif pd.isna(row['Destino2']):
+                return row['Destino1']
+            else:
+                return f"{row['Destino1']} | {row['Destino2']}"
+        # Aplicar la función a cada fila del DataFrame
+        rf['Destino'] = rf.apply(combinar_destinos, axis=1)
+        rf['Horas en patio'] = rf[['Horas en patio1', 'Horas en patio2']].max(axis=1)
+        rf['ValorViaje'] = rf['ValorViaje1'] + rf['ValorViaje2']
+        rf= rf.sort_values(by='Horas en patio', ascending=False)
+        rf = rf[['Destino', 'Remolque1', 'Remolque2', 'Horas en patio', 'ValorViaje']]
+        
+        # Reiniciar el índice comenzando desde 1
+        rf.reset_index(drop=True, inplace=True)
+        rf.index = rf.index + 1
+        
+        return rf
+
+
+    return emparejamiento_fin(planas)
