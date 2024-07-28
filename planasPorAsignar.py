@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 planasPorAsignar = Blueprint('planasPorAsignar', __name__)
 @planasPorAsignar.route('/')
 def index():
-    planas, Operadores, Cartas, Gasto, Km, Bloqueo, ETAs, Permisos,\
+    planas, Operadores,Bloqueo, Permisos,\
     DataDIA, MttoPrev, CheckTaller, OrAbierta  =  \
         cargar_datos()
     planasSAC = planas_sac()
@@ -49,30 +49,9 @@ def cargar_datos():
         """),
         ("fetch_data", "SELECT * FROM DimTableroControl_Disponibles"),
         ("fetch_data", """
-            SELECT IdViaje, FechaSalida, Operador, Tractor, UnidadOperativa, Cliente, SubtotalMXN, Ruta, IdConvenio 
-            FROM ReporteCartasPorte 
-            WHERE FechaSalida > DATEADD(day, -90, GETDATE())
-        """),
-        ("fetch_data_PRO", """
-            SELECT Reporte, Empresa, Tractor, FechaSiniestro, TotalFinal
-            FROM DimReporteUnificado
-            WHERE FechaSiniestro > DATEADD(day, -90, GETDATE())
-        """),
-        ("fetch_data", """
-            SELECT NombreOperador, FechaPago, Tractor, KmsReseteo  
-            FROM DimRentabilidadLiquidacion 
-            WHERE FechaPago > DATEADD(day, -90, GETDATE())
-        """),
-        ("fetch_data", """
             SELECT NombreOperador, Activo, OperadorBloqueado
             FROM DimOperadores
             WHERE Activo = 'Si'
-        """),
-        ("fetch_data", """
-            SELECT NombreOperador, FechaFinalizacion, CumpleETA 
-            FROM DimIndicadoresOperaciones 
-            WHERE FechaLlegada > DATEADD(day, -90, GETDATE()) 
-            AND FechaLlegada IS NOT NULL
         """),
         ("fetch_data", """
             SELECT NoOperador, Nombre, Activo, FechaBloqueo
@@ -104,7 +83,7 @@ def cargar_datos():
         ("fetch_data", """
             SELECT IdDimOrdenReparacion, IdOR, TipoEquipo, ClaveEquipo, FechaCreacion, FechaFinalizacion
             FROM DimOrdenesReparacion
-            WHERE FechaFinalizacion IS NULL AND TipoEquipo = 'Tractor'
+            WHERE FechaFinalizacion IS NULL AND TipoEquipo = 'Tractor'  AND Descripcion != 'Orden de Reparacion Especial'
         """)
     ]
 
