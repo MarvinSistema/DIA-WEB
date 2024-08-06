@@ -1,0 +1,16 @@
+# Excluir el directorio del entorno virtual
+env/
+
+# Excluir los archivos de cache de Python
+__pycache__/
+
+# Excluir el archivo de variables de entorno
+.env
+
+# Excluir archivos y directorios relacionados con Git
+.git
+.gitignore
+
+# Excluir archivos de configuración locales no necesarios
+.docker-compose.yml
+Procfile

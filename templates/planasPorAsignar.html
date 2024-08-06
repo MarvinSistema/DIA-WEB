@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DIA</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+
+    <div class="header">
+        <h1>D I A</h1>
+        <img src="{{ url_for('static', filename='images/logoZinergia.png') }}" alt="Logo Zinergia" class="logo">
+    </div>
+    
+    <div class="menu">
+        <a href="/home">HOME</a>
+        <a href="/about">ABOUT</a>
+        <a href="/contact">CONTACT</a>
+    </div>
+
+    <div class="titulo-tabla-container_b">
+        <h1>Planas a Asignar</h1>
+        {{ datos_html_empates_dobles|safe }}
+    </div>
+    </div>
+        <div class="titulo-tabla-container_b">
+        <h1>Operadores Full Disponibles</h1>
+        {{ operadoresFull|safe }}
+    <br><br><br>
+    
+</body>
+</html>

@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=development
+      - DATABASE_URL=mssql+pyodbc://username:password@db/database?driver=ODBC+Driver+17+for+SQL+Server
+    depends_on:
+      - db
+    networks:
+      - app-network
+
+  db:
+    image: mcr.microsoft.com/mssql/server
+    environment:
+      SA_PASSWORD: "YourStrong@Passw0rd"
+      ACCEPT_EULA: "Y"
+    ports:
+      - "1433:1433"
+    networks:
+      - app-network
+    volumes:
+      - db_data:/var/opt/mssql  # Agrega un volumen para persistir los datos
+
+volumes:
+  db_data:  # Define el volumen
+
+networks:
+  app-network:
+    driver: bridge
+
