@@ -1,3 +1,4 @@
+
 FROM python:3.9-slim
 
 # Instalar dependencias necesarias
@@ -23,4 +24,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE $PORT
 
 # Comando para ejecutar la aplicación
-CMD gunicorn app:app --bind 0.0.0.0:$PORT
+CMD gunicorn app:app --workers 3  --bind 0.0.0.0:$PORT
