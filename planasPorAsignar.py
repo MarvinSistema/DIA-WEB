@@ -200,7 +200,7 @@ def siniestralidad(Gasto, Km):
     # Filtrar las filas que contengan "SINIESTRO" en la columna "Reporte", la empresa NYC
     if 'Reporte' in G.columns:
         G = G[G['Reporte'].str.contains("SINIESTRO")]
-    G= G[G['Empresa'].str.contains("NYC")]
+        G= G[G['Empresa'].str.contains("NYC")]
 
     # Quedarme con tres meses de historia hacia atras a partir de hoy, mantener las columnas
     G= G[pd.to_datetime(G['FechaSiniestro']).dt.date >= (datetime.now() - timedelta(days=3*30)).date()]
