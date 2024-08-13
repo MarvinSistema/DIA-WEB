@@ -73,12 +73,14 @@ def planas_en_patio(planas, DataDIA, planasSAC):
     planas.index += 1
     return planas
 
-def procesar_operadores(Operadores, DataDIA):
+def procesar_operadores(Operadores, DataDIA, OperadorYaAsignado):
     Operadores = Operadores[(Operadores['Estatus'] == 'Disponible') & (Operadores['Destino'] == 'NYC')]
     Operadores  = Operadores [Operadores ['UOperativa'].isin(['U.O. 01 ACERO', 'U.O. 02 ACERO', 'U.O. 03 ACERO', 'U.O. 04 ACERO', 'U.O. 06 ACERO (TENIGAL)', 'U.O. 07 ACERO','U.O. 39 ACERO'])]
     Operadores['Tiempo Disponible'] = ((datetime.now() - Operadores['FechaEstatus']).dt.total_seconds() / 3600).round(1)
     #Operadores =Operadores[Operadores['Tiempo Disponible'] > 6]
     Operadores= Operadores[~Operadores['Operador'].isin(DataDIA['Operador'])]#Excluye operadores ya asigndos
+    if not OperadorYaAsignado.empty:
+        Operadores= Operadores[~Operadores['Operador'].isin(OperadorYaAsignado['Operador'])]#Excluye operadores ya asigndos
     Operadores = Operadores[['Operador', 'Tractor', 'UOperativa', 'Tiempo Disponible']]
     Operadores.sort_values(by='Tiempo Disponible', ascending=False, inplace=True)
     Operadores.reset_index(drop=True, inplace=True)
@@ -86,8 +88,7 @@ def procesar_operadores(Operadores, DataDIA):
     return Operadores
 
 dataframe_cache = TTLCache(maxsize=100, ttl=1800)  # Tamaño máximo 1 elemento, TTL de 10 minutos
-
-def get_cached_dataframe():
+def sac_cache():
     url = 'https://drive.google.com/uc?id=1h3oynOXp11tKAkNmq4SkjBR8q_ZyJa2b'
     cache_file = 'seguimiento_ternium.xlsx'
     cache_time_limit = timedelta(minutes=30)  # Duración de la caché, ajustar según sea necesario
@@ -124,4 +125,6 @@ def get_cached_dataframe():
 
 @cached(dataframe_cache)
 def planas_sac():
-    return get_cached_dataframe()
+    return sac_cache()
+
+
